@@ -93,8 +93,8 @@
   }
 
   function detectPlatform() {
-    const host = window.location.hostname.toLowerCase();
-    const path = window.location.pathname.toLowerCase();
+    const host = (window.location.hostname || "").toLowerCase();
+    const path = (window.location.pathname || "").toLowerCase();
     if (host.includes("amazon.")) return "amazon";
     if (host.includes("flipkart.")) return "flipkart";
     if (host.includes("imdb.")) return "imdb";
@@ -110,7 +110,7 @@
   }
 
   function getAmazonAsin() {
-    const path = window.location.pathname;
+    const path = window.location.pathname || "";
     const match = path.match(/(?:dp|gp\/product|product-reviews|gp\/aw\/d|amazon)\/([A-Z0-9]{10})/i);
     if (match) return match[1];
 
@@ -839,6 +839,7 @@
       else if (s === 2) stats.two_star++;
       else if (s === 1) stats.one_star++;
       scoreSum += s * 20;
+    });
     stats.avg_score = Math.round(scoreSum / totalHarvested);
 
     // Extract page-level rating and metadata
