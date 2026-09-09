@@ -17,13 +17,13 @@
 
   const JUNK_PATTERNS = [
     /\b(read\s*more|read\s*less|show\s*more|show\s*less)\b/gi,
-    /\b(verified\s*purchase|verified\s*buyer)\b/gi,
+    /\b(verified\s*(?:purchase|buyer)|certified\s*buyer|flipkart\s*customer)(?:\s*,\s*[^.\n|–-]+)?/gi,
     /\b(translate\s*review\s*to\s*english|see\s*original\s*review)\b/gi,
     /\b\d+\s*people?\s*found\s*this\s*helpful\b/gi,
     /\bone\s*person\s*found\s*this\s*helpful\b/gi,
     /\bwas\s*this\s*review\s*helpful(\s*to\s*you)?\??/gi,
     /\breviewed\s+in\s+[^.\n]+?\s+on\s+[A-Za-z0-9,\s]+\b/gi,
-    /\b(helpful|report\s*abuse|report)\b/gi,
+    /\b(helpful|report\s*abuse|report|permalink|upvote|downvote)\b/gi,
     /\b(size|colour|color|pattern|style|pack|flavor|flavour|style name|scent name|edition)\s*:\s*[^.\n|–-]+/gi,
     /\bpack\s*of\s*\d+\b/gi,
     /\s*[-–|]\s*(?:size|colour|color|pack|style|pattern|flavor|flavour|edition)\s*:[^.\n|–-]+/gi,
@@ -51,14 +51,14 @@
     let starTag = "";
     let starNum = 4; // default
     if (starRating) {
-      const match = starRating.match(/([1-5])(?:\.0)?\s*(?:out\s*of\s*5|\/5|stars?)/i);
-      if (match) {
+      const match = String(starRating).match(/([1-5])(?:\.\d+)?\s*(?:out\s*of\s*5|\/5|stars?|★)?/i);
+      if (match && match[1]) {
         starNum = parseInt(match[1], 10);
         starTag = `[★${starNum}] `;
       }
     }
 
-    const cleanTitle = (title || "").trim().replace(/^\d+(\.\d+)?\s*(out\s*of\s*5\s*stars|stars)\s*/i, "").trim();
+    const cleanTitle = (title || "").trim().replace(/^\d+(\.\d+)?\s*(out\s*of\s*5\s*stars|stars|★)?\s*/i, "").trim();
     const cleanBody = cleanBoilerplate(body || "");
 
     let fullText = "";
@@ -98,7 +98,11 @@
     if (host.includes("amazon.")) return "amazon";
     if (host.includes("flipkart.")) return "flipkart";
     if (host.includes("imdb.")) return "imdb";
-    // Secret Offline Demo detection (served at localhost:8000/demo)
+    // Secret Offline Flipkart Demo detection (served at localhost:8000/demo-flipkart)
+    if ((host === "localhost" || host === "127.0.0.1") && (path.includes("/demo-flipkart") || document.getElementById("flipkartDemo") || document.querySelector(".EPCmJX, [data-platform='flipkart']"))) {
+      return "flipkart";
+    }
+    // Secret Offline Amazon Demo detection (served at localhost:8000/demo)
     if ((host === "localhost" || host === "127.0.0.1") && (path.includes("/demo") || document.getElementById("productTitle") || document.getElementById("ASIN"))) {
       return "amazon";
     }
@@ -236,63 +240,291 @@
   }
 
   /**
-   * Harvest Flipkart reviews across multiple pages with timeout guards
+   * Helper to construct a URL with updated page parameter
    */
-  async function harvestFlipkartReviews(targetCount = 12) {
-    let allReviews = [];
+  function buildFlipkartPageUrl(baseUrl, pageNum) {
+    try {
+      const u = new URL(baseUrl, window.location.origin);
+      u.searchParams.set("page", String(pageNum));
+      return u.toString();
+    } catch (_) {
+      const clean = baseUrl.replace(/([?&])page=\d+(&|$)/i, "$1").replace(/[?&]$/, "");
+      const sep = clean.includes("?") ? "&" : "?";
+      return `${clean}${sep}page=${pageNum}`;
+    }
+  }
 
-    // Parse current DOM first
-    const domCards = document.querySelectorAll(
-      "div._27M-vq, div._16PBlm, div.cPHDOP, div._2wzgFH, div.col-12-12"
-    );
-    domCards.forEach((card) => {
-      const starEl = card.querySelector("div._3LWZlK, div._1BLPMq");
-      const starText = starEl ? (starEl.textContent || "").trim() + " stars" : "";
-      const titleEl = card.querySelector("p._2-N8zT, div._2-N8zT");
-      const titleText = titleEl ? (titleEl.textContent || "").trim() : "";
-      const bodyEl =
-        card.querySelector("div.t-ZTKy > div > div") ||
-        card.querySelector("div.t-ZTKy") ||
-        card.querySelector("div._6K-7Co") ||
-        card.querySelector("div._2wzgFH");
-      const bodyText = bodyEl ? (bodyEl.textContent || "").trim() : "";
+  /**
+   * Extract Flipkart product identifiers (PID, Item ID, Slug) and construct canonical review endpoints
+   */
+  function getFlipkartProductInfo() {
+    const path = window.location.pathname;
+    const search = window.location.search;
+    const href = window.location.href;
+
+    // 1. Extract PID (e.g. ?pid=MOBGTAGPTB3VS24W)
+    let pid = null;
+    const pidMatch = search.match(/[?&]pid=([a-zA-Z0-9]+)/i) || path.match(/[?&]pid=([a-zA-Z0-9]+)/i) || href.match(/[?&#]pid=([a-zA-Z0-9]+)/i);
+    if (pidMatch) {
+      pid = pidMatch[1];
+    } else {
+      const pidEl = document.querySelector('input[name="pid"], [data-pid], a[href*="pid="]');
+      if (pidEl) {
+        if (pidEl.value) {
+          pid = pidEl.value;
+        } else if (pidEl.getAttribute("data-pid")) {
+          pid = pidEl.getAttribute("data-pid");
+        } else if (pidEl.href) {
+          const m = pidEl.href.match(/[?&]pid=([a-zA-Z0-9]+)/i);
+          if (m) pid = m[1];
+        }
+      }
+      if (!pid) {
+        const canonical = document.querySelector('link[rel="canonical"]');
+        if (canonical && canonical.href) {
+          const m = canonical.href.match(/[?&]pid=([a-zA-Z0-9]+)/i);
+          if (m) pid = m[1];
+        }
+      }
+    }
+
+    // 2. Extract Item ID (starts with "itm", e.g. itm6ac6485515ae4 or alphanumeric)
+    let itemId = null;
+    const itemMatch = path.match(/\/(?:p|product-reviews)\/([a-zA-Z0-9]+)/i);
+    if (itemMatch) {
+      itemId = itemMatch[1];
+    } else {
+      const itemEl = document.querySelector('a[href*="/product-reviews/"], a[href*="/p/"]');
+      if (itemEl && itemEl.href) {
+        const m = itemEl.href.match(/\/(?:p|product-reviews)\/([a-zA-Z0-9]+)/i);
+        if (m) itemId = m[1];
+      }
+      if (!itemId) {
+        const canonical = document.querySelector('link[rel="canonical"]');
+        if (canonical && canonical.href) {
+          const m = canonical.href.match(/\/(?:p|product-reviews)\/([a-zA-Z0-9]+)/i);
+          if (m) itemId = m[1];
+        }
+      }
+    }
+
+    // 3. Extract Product Slug (e.g. apple-iphone-15-black-128-gb)
+    let slug = null;
+    const slugMatch = path.match(/^\/([^/]+)\/(?:p|product-reviews)\//i);
+    if (slugMatch && !["p", "product-reviews"].includes(slugMatch[1].toLowerCase())) {
+      slug = slugMatch[1];
+    }
+
+    // 4. Construct canonical review base URL
+    let reviewBaseUrl = null;
+    const allReviewsLink = document.querySelector('a[href*="/product-reviews/"]');
+    if (allReviewsLink && allReviewsLink.href && allReviewsLink.href.includes("/product-reviews/")) {
+      try {
+        const u = new URL(allReviewsLink.href, window.location.origin);
+        u.searchParams.delete("page");
+        reviewBaseUrl = u.toString();
+      } catch (_) {
+        reviewBaseUrl = allReviewsLink.href.replace(/([?&])page=\d+(&|$)/i, "$1").replace(/[?&]$/, "");
+      }
+    } else if (itemId && pid) {
+      const origin = window.location.origin;
+      if (slug) {
+        reviewBaseUrl = `${origin}/${slug}/product-reviews/${itemId}?pid=${pid}`;
+      } else {
+        reviewBaseUrl = `${origin}/product-reviews/${itemId}?pid=${pid}`;
+      }
+    } else if (path.includes("/p/")) {
+      try {
+        const u = new URL(window.location.href);
+        u.pathname = u.pathname.replace(/\/p\//, "/product-reviews/");
+        u.searchParams.delete("page");
+        reviewBaseUrl = u.toString();
+      } catch (_) {
+        const cleanSearch = search.replace(/([?&])page=\d+(&|$)/i, "$1").replace(/[?&]$/, "");
+        reviewBaseUrl = `${window.location.origin}${path.replace(/\/p\//, "/product-reviews/")}${cleanSearch}`;
+      }
+    } else if (path.includes("/product-reviews/")) {
+      try {
+        const u = new URL(window.location.href);
+        u.searchParams.delete("page");
+        reviewBaseUrl = u.toString();
+      } catch (_) {
+        reviewBaseUrl = window.location.href.replace(/([?&])page=\d+(&|$)/i, "$1").replace(/[?&]$/, "");
+      }
+    }
+
+    return { pid, itemId, slug, reviewBaseUrl };
+  }
+
+  /**
+   * Parse Flipkart review cards from a document (supports modern Batman-Returns and legacy DOMs)
+   */
+  function parseFlipkartCardsFromDoc(rootDoc) {
+    const reviews = [];
+    if (!rootDoc) return reviews;
+
+    // 1. Check for JSON-LD schema.org Product Reviews
+    try {
+      const ldScripts = rootDoc.querySelectorAll('script[type="application/ld+json"]');
+      ldScripts.forEach((script) => {
+        try {
+          const raw = JSON.parse(script.textContent || script.innerText || "{}");
+          const items = Array.isArray(raw) ? raw : [raw];
+          items.forEach((item) => {
+            const rawRevs = item.review || (item["@type"] === "Product" ? item.review : null);
+            if (Array.isArray(rawRevs)) {
+              rawRevs.forEach((r) => {
+                const rating = r.reviewRating?.ratingValue || 4;
+                const title = r.headline || r.name || "";
+                const body = r.reviewBody || r.description || "";
+                const validated = cleanAndValidateReview(`${rating} stars`, title, body);
+                if (validated) reviews.push(validated);
+              });
+            }
+          });
+        } catch (_) {}
+      });
+    } catch (_) {}
+
+    // 2. Selectors for Flipkart review card containers
+    const cardSelectors = [
+      "div.EPCmJX",
+      "div[class*='EPCmJX']",
+      "div._27M-vq",
+      "div._16PBlm",
+      "div._2wzgFH",
+      "div.col-12-12 > div._2wzgFH",
+      "div.cPHDOP div._2wzgFH"
+    ];
+    let cards = Array.from(rootDoc.querySelectorAll(cardSelectors.join(", ")));
+
+    // Fallback: search for cards containing rating badges and traverse to container
+    if (cards.length === 0) {
+      const badges = rootDoc.querySelectorAll("div.XQDdHH, div.Wphh3N, div._3LWZlK, div._1BLPMq, [class*='XQDdHH']");
+      const foundCards = new Set();
+      badges.forEach((b) => {
+        let ancestor = b.parentElement;
+        while (ancestor && ancestor !== rootDoc.body && ancestor.tagName !== "BODY") {
+          const hasBody = ancestor.querySelector("div.ZmyHeo, div.t-ZTKy, div._6K-7Co, [class*='ZmyHeo'], [class*='t-ZTKy']");
+          if (hasBody) {
+            foundCards.add(ancestor);
+            break;
+          }
+          ancestor = ancestor.parentElement;
+        }
+      });
+      cards = Array.from(foundCards);
+    }
+
+    cards.forEach((card) => {
+      // Star rating: .XQDdHH (modern), .Wphh3N, ._3LWZlK (legacy)
+      const starEl = card.querySelector(
+        "div.XQDdHH, div.Wphh3N, div._3LWZlK, div._1BLPMq, span.XQDdHH, [class*='XQDdHH'], [class*='Wphh3N'], [class*='_3LWZlK']"
+      );
+      let starText = "";
+      if (starEl) {
+        const rawStar = (starEl.textContent || starEl.innerText || "").trim();
+        starText = rawStar ? `${rawStar} stars` : "";
+      } else {
+        const match = (card.textContent || "").match(/\b([1-5])\s*★/);
+        if (match) starText = `${match[1]} stars`;
+      }
+
+      // Title: p.z9E0IG (modern), p._2-N8zT (legacy)
+      const titleEl = card.querySelector(
+        "p.z9E0IG, div.z9E0IG, p._2-N8zT, div._2-N8zT, [class*='z9E0IG'], [class*='_2-N8zT'], p[class*='title'], h4, h5"
+      );
+      let titleText = "";
+      if (titleEl) {
+        titleText = (titleEl.textContent || titleEl.innerText || "").trim();
+      }
+
+      // Body: div.ZmyHeo (modern), div.t-ZTKy (legacy)
+      const bodyEl = card.querySelector(
+        "div.ZmyHeo > div > div, div.ZmyHeo, div.t-ZTKy > div > div, div.t-ZTKy, div._6K-7Co, [class*='ZmyHeo'], [class*='t-ZTKy']"
+      );
+      let bodyText = "";
+      if (bodyEl) {
+        const clone = bodyEl.cloneNode(true);
+        clone.querySelectorAll("span._1BWGvX, span._34Mpda, span[class*='_1BWGvX'], button").forEach((el) => el.remove());
+        bodyText = (clone.textContent || clone.innerText || "").replace(/\s*(?:READ\s*MORE|Read\s*More)[.!\s]*$/gi, "").trim();
+      } else {
+        const divs = card.querySelectorAll("div, p");
+        for (const d of divs) {
+          const t = (d.textContent || "").trim();
+          if (t.length > 25 && t !== titleText && !t.includes("Certified Buyer") && !t.includes("Permalink")) {
+            bodyText = t.replace(/\s*(?:READ\s*MORE|Read\s*More)[.!\s]*$/gi, "").trim();
+            break;
+          }
+        }
+      }
+
       const item = cleanAndValidateReview(starText, titleText, bodyText);
-      if (item) allReviews.push(item);
+      if (item) reviews.push(item);
     });
 
-    // Check for "All reviews" link on Flipkart product page
-    const allReviewsLink = document.querySelector('a[href*="/product-reviews/"]');
-    if (allReviewsLink && allReviewsLink.href) {
-      const baseUrl = allReviewsLink.href.replace(/&page=\d+/, "");
-      const pages = targetCount <= 10 ? [1, 2] : [1, 2, 3, 4];
+    return reviews;
+  }
+
+  /**
+   * Harvest Flipkart reviews across multiple pages with parallel fetch & timeout guards
+   */
+  async function harvestFlipkartReviews(targetCount = 12) {
+    console.log(`[easymode] Harvesting Flipkart reviews (target effort: ${targetCount})...`);
+    const allReviews = [];
+
+    // 1. Parse active DOM first (in case already on product page or reviews page)
+    try {
+      const activeDocReviews = parseFlipkartCardsFromDoc(document);
+      if (activeDocReviews.length > 0) {
+        console.log(`[easymode] Harvested ${activeDocReviews.length} reviews directly from active Flipkart DOM.`);
+        allReviews.push(...activeDocReviews);
+      }
+    } catch (err) {
+      console.warn("[easymode] Error parsing active Flipkart DOM:", err);
+    }
+
+    // 2. Extract product identifiers and review base URL
+    const flipkartInfo = getFlipkartProductInfo();
+    console.log("[easymode] Flipkart product info:", flipkartInfo);
+
+    if (flipkartInfo.reviewBaseUrl) {
+      const baseUrl = flipkartInfo.reviewBaseUrl;
+
+      let pages = [1, 2];
+      if (targetCount > 8 && targetCount <= 15) {
+        pages = [1, 2, 3];
+      } else if (targetCount > 15) {
+        pages = [1, 2, 3, 4];
+      }
+
+      console.log(`[easymode] Fetching Flipkart review pages [${pages.join(", ")}] from: ${baseUrl}`);
+
       const fetchPromises = pages.map(async (p) => {
+        const pageUrl = buildFlipkartPageUrl(baseUrl, p);
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 6000);
         try {
-          const sep = baseUrl.includes("?") ? "&" : "?";
-          const resp = await fetch(`${baseUrl}${sep}page=${p}`, {
+          const resp = await fetch(pageUrl, {
             credentials: "same-origin",
+            headers: {
+              "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+            },
             signal: controller.signal
           });
           clearTimeout(timeoutId);
-          if (!resp.ok) return [];
+          if (!resp.ok) {
+            console.warn(`[easymode] Flipkart page ${p} fetch returned HTTP ${resp.status}`);
+            return [];
+          }
           const html = await resp.text();
           const doc = new DOMParser().parseFromString(html, "text/html");
-          const cards = doc.querySelectorAll("div._27M-vq, div._16PBlm, div.cPHDOP, div._2wzgFH");
-          const pageReviews = [];
-          cards.forEach((c) => {
-            const starEl = c.querySelector("div._3LWZlK, div._1BLPMq");
-            const starText = starEl ? (starEl.textContent || "").trim() + " stars" : "";
-            const titleEl = c.querySelector("p._2-N8zT, div._2-N8zT");
-            const titleText = titleEl ? (titleEl.textContent || "").trim() : "";
-            const bodyEl = c.querySelector("div.t-ZTKy > div > div, div.t-ZTKy, div._2wzgFH");
-            const bodyText = bodyEl ? (bodyEl.textContent || "").trim() : "";
-            const item = cleanAndValidateReview(starText, titleText, bodyText);
-            if (item) pageReviews.push(item);
-          });
+          const pageReviews = parseFlipkartCardsFromDoc(doc);
+          console.log(`[easymode] Flipkart page ${p} parsed: ${pageReviews.length} reviews.`);
           return pageReviews;
         } catch (e) {
           clearTimeout(timeoutId);
+          console.warn(`[easymode] Flipkart page ${p} fetch skipped/timed out:`, e.message || e);
           return [];
         }
       });
@@ -305,6 +537,7 @@
       });
     }
 
+    console.log(`[easymode] Total raw Flipkart reviews harvested: ${allReviews.length}`);
     return allReviews;
   }
 
@@ -353,7 +586,36 @@
         }
       }
     } else if (platform === "flipkart") {
-      rawItems = await harvestFlipkartReviews(maxReviews);
+      const isLocalDemo = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+      if (isLocalDemo) {
+        console.log("[easymode] Offline Flipkart demo detected. Parsing pre-rendered cards directly from DOM...");
+        rawItems = parseFlipkartCardsFromDoc(document);
+        if (rawItems.length === 0) {
+          try {
+            const demoResp = await fetch("http://localhost:8000/api/demo-flipkart-reviews");
+            if (demoResp.ok) {
+              const demoData = await demoResp.json();
+              if (Array.isArray(demoData.reviews)) {
+                demoData.reviews.forEach((rStr) => {
+                  const match = rStr.match(/^\[★([1-5])\]\s*(.*)$/);
+                  const starText = match ? `${match[1]} stars` : "4 stars";
+                  const content = match ? match[2] : rStr;
+                  const parts = content.split(" - ");
+                  const title = parts.length > 1 ? parts[0] : "";
+                  const body = parts.length > 1 ? parts.slice(1).join(" - ") : content;
+                  const item = cleanAndValidateReview(starText, title, body);
+                  if (item) rawItems.push(item);
+                });
+              }
+            }
+          } catch (_) {}
+        }
+      } else {
+        rawItems = await harvestFlipkartReviews(maxReviews);
+        if (rawItems.length === 0) {
+          rawItems = parseFlipkartCardsFromDoc(document);
+        }
+      }
     } else {
       // IMDb / generic fallback
       const cards = document.querySelectorAll(
@@ -396,7 +658,7 @@
           total_raw: 0,
           total_unique: 0,
           platform: platform,
-          asin: platform === "amazon" ? getAmazonAsin() : null
+          asin: platform === "amazon" ? getAmazonAsin() : (platform === "flipkart" ? (getFlipkartProductInfo().pid || getFlipkartProductInfo().itemId) : null)
         }
       };
     }
@@ -464,7 +726,7 @@
         crit_count: criticals.length,
         sampled_count: representative.length,
         platform: platform,
-        asin: platform === "amazon" ? getAmazonAsin() : null
+        asin: platform === "amazon" ? getAmazonAsin() : (platform === "flipkart" ? (getFlipkartProductInfo().pid || getFlipkartProductInfo().itemId) : null)
       }
     };
   }

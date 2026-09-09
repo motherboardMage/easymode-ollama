@@ -284,7 +284,13 @@ async function detectActiveTab() {
     const url = new URL(tab.url);
     const host = url.hostname.toLowerCase();
 
-    if (host.includes("amazon.")) {
+    if (host.includes("flipkart.") || url.pathname.includes("flipkart")) {
+      siteBadge.textContent = "Flipkart Detected";
+      currentSite = "Flipkart";
+      if (host === "localhost" || host === "127.0.0.1") {
+        addDebugLog("Offline Flipkart Demo Page active (boAt Airdopes / iPhone 15)", "info");
+      }
+    } else if (host.includes("amazon.")) {
       siteBadge.textContent = "Amazon Detected";
       currentSite = "Amazon";
     } else if (
@@ -295,9 +301,6 @@ async function detectActiveTab() {
       siteBadge.textContent = "Amazon Detected";
       currentSite = "Amazon";
       addDebugLog("Offline Demo Page active (Lakmé Sun Expert SPF 50 - ASIN: B00CS1KT96)", "info");
-    } else if (host.includes("flipkart.")) {
-      siteBadge.textContent = "Flipkart Detected";
-      currentSite = "Flipkart";
     } else if (host.includes("imdb.")) {
       siteBadge.textContent = "IMDb Detected";
       currentSite = "IMDb";

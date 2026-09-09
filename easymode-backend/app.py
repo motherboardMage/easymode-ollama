@@ -275,6 +275,26 @@ async def get_demo_page():
     return HTMLResponse(content=demo_page.render_demo_html(), status_code=200)
 
 
+@app.get("/demo-flipkart", response_class=HTMLResponse)
+@app.get("/demo/flipkart", response_class=HTMLResponse)
+async def get_flipkart_demo_page():
+    """Serves the self-contained offline Flipkart product page for Apple iPhone 15."""
+    return HTMLResponse(content=demo_page.render_flipkart_demo_html(), status_code=200)
+
+
+@app.get("/{slug}/product-reviews/{item_id}", response_class=HTMLResponse)
+@app.get("/{slug}/p/{item_id}", response_class=HTMLResponse)
+async def get_flipkart_demo_reviews_page(slug: str, item_id: str):
+    """Handles Flipkart review endpoints so multi-page pagination succeeds effortlessly offline."""
+    return HTMLResponse(content=demo_page.render_flipkart_demo_html(), status_code=200)
+
+
+@app.get("/api/demo-flipkart-reviews")
+async def get_demo_flipkart_reviews():
+    """Returns the pre-extracted JSON reviews dataset for Flipkart Apple iPhone 15."""
+    return demo_page.load_flipkart_offline_data()
+
+
 @app.get("/product-reviews/{asin}", response_class=HTMLResponse)
 @app.get("/product-reviews/{asin}/{path:path}", response_class=HTMLResponse)
 @app.get("/gp/product/{asin}", response_class=HTMLResponse)
