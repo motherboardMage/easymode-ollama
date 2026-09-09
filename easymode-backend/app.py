@@ -425,6 +425,25 @@ async def analyze_reviews(payload: AnalyzeRequest):
             payload.stats = p_data.get("stats")
         payload.total_analyzed = len(cleaned_reviews)
 
+    # In offline demo mode, immediately serve verified cached synthesis
+    if EASYMODE_OFFLINE or payload.reviews == ["__offline_demo__"]:
+        prod_id = resolve_product_from_payload(payload, cleaned_reviews)
+        synth = demo_page.get_cached_synthesis(prod_id)
+        if synth:
+            p_data = demo_page.load_product_reviews(prod_id)
+            p_stats = payload.stats or p_data.get("stats")
+            CURRENT_STATUS = "idle"
+            logger.info(f"Offline mode active: Serving instantaneous synthesis for {prod_id} ({synth['decision']}, {synth['score']})")
+            return AnalyzeResponse(
+                decision=synth["decision"],
+                score=synth["score"],
+                pros=synth["pros"],
+                cons=synth["cons"],
+                verdict=synth["verdict"],
+                total_analyzed=payload.total_analyzed or (p_stats.get("total", 30) if p_stats else 30),
+                stats=p_stats
+            )
+
     if not cleaned_reviews:
         CURRENT_STATUS = "idle"
         raise HTTPException(
@@ -495,7 +514,8 @@ async def analyze_reviews(payload: AnalyzeRequest):
     raw_response_text = ""
 
     try:
-        async with httpx.AsyncClient(timeout=OLLAMA_TIMEOUT) as client:
+        client_timeout = httpx.Timeout(OLLAMA_TIMEOUT, connect=2.0)
+        async with httpx.AsyncClient(timeout=client_timeout) as client:
             logger.info(f"Dispatching inference request to Ollama ({chat_endpoint})...")
             try:
                 response = await client.post(chat_endpoint, json=chat_payload)
