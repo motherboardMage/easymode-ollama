@@ -259,13 +259,17 @@ def robust_parse_model_json(raw_text: str) -> dict:
 async def health_check(background_tasks: BackgroundTasks):
     """Health check endpoint that also triggers background model pre-warming."""
     background_tasks.add_task(warm_up_model)
+    flipkart_offline = demo_page.load_flipkart_offline_data()
     return {
         "status": "online",
         "model": OLLAMA_MODEL,
         "offline_mode": EASYMODE_OFFLINE,
         "demo_url": "http://localhost:8000/demo",
         "demo_asin": OFFLINE_DATA.get("asin", "B00CS1KT96"),
-        "demo_product": OFFLINE_DATA.get("product_name", "Lakmé Sun Expert SPF 50")
+        "demo_product": OFFLINE_DATA.get("product_name", "Lakmé Sun Expert SPF 50"),
+        "demo_flipkart_url": "http://localhost:8000/demo-flipkart",
+        "demo_flipkart_pid": flipkart_offline.get("pid", "MOBGTAGPTB3VS24W"),
+        "demo_flipkart_product": flipkart_offline.get("product_name", "Apple iPhone 15 (Black, 128 GB)")
     }
 
 

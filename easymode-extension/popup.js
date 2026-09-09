@@ -234,8 +234,11 @@ async function checkBackendHealth() {
       hideAlert();
 
       if (data.offline_mode) {
-        addDebugLog("Backend in Secret Offline Demo Mode (B00CS1KT96 pre-loaded).", "system");
-        updateOfflineDemoUI(data.demo_url || "http://localhost:8000/demo");
+        addDebugLog("Backend in Secret Offline Demo Mode (Amazon & Flipkart datasets pre-loaded).", "system");
+        updateOfflineDemoUI(
+          data.demo_url || "http://localhost:8000/demo",
+          data.demo_flipkart_url || "http://localhost:8000/demo-flipkart"
+        );
       }
       return true;
     } else {
@@ -244,9 +247,8 @@ async function checkBackendHealth() {
   } catch (err) {
     isBackendOnline = false;
     backendStatus.className = "status-pill status-offline";
-    backendStatus.title = "Cannot reach easymode backend at http://localhost:8000";
     statusText.textContent = "Offline";
-
+    modelBadge.textContent = "Unavailable";
     showAlert(
       "Backend Offline",
       `FastAPI server not detected on localhost:8000.<br>Launch it via terminal:<br><code>cd easymode-backend &amp;&amp; ./run.sh</code>`
@@ -255,7 +257,7 @@ async function checkBackendHealth() {
   }
 }
 
-function updateOfflineDemoUI(demoUrl) {
+function updateOfflineDemoUI(demoUrl, flipkartDemoUrl = "http://localhost:8000/demo-flipkart") {
   const section = document.getElementById("debugOfflineSection");
   if (section) {
     section.classList.remove("hidden");
@@ -265,6 +267,14 @@ function updateOfflineDemoUI(demoUrl) {
       linkEl.onclick = (e) => {
         e.preventDefault();
         chrome.tabs.create({ url: demoUrl });
+      };
+    }
+    const fkLinkEl = document.getElementById("debugFlipkartDemoLink");
+    if (fkLinkEl) {
+      fkLinkEl.href = flipkartDemoUrl;
+      fkLinkEl.onclick = (e) => {
+        e.preventDefault();
+        chrome.tabs.create({ url: flipkartDemoUrl });
       };
     }
   }

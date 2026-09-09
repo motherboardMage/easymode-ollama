@@ -357,7 +357,49 @@
   }
 
   /**
-   * Parse Flipkart review cards from a document (supports modern Batman-Returns and legacy DOMs)
+   * Automatically ensure Flipkart lazy-loaded / virtualized reviews are mounted in DOM
+   */
+  async function ensureFlipkartReviewsMountedInDOM() {
+    let reviews = parseFlipkartCardsFromDoc(document);
+    if (reviews.length >= 3) return reviews;
+
+    // Search for review anchor or heading to scroll into view
+    const reviewAnchor =
+      document.querySelector('a[href*="/product-reviews/"]') ||
+      document.querySelector('#reviews, [data-testid*="review"], div[class*="review"], div[class*="Rating"]') ||
+      Array.from(document.querySelectorAll("h2, h3, h4, div, span")).find((el) =>
+        /ratings?\s*&\s*reviews?/i.test(el.textContent || "")
+      );
+
+    const prevY = window.scrollY || 0;
+
+    try {
+      if (reviewAnchor) {
+        reviewAnchor.scrollIntoView({ behavior: "instant", block: "center" });
+      } else {
+        window.scrollTo({ top: Math.max(1200, document.body.scrollHeight * 0.5), behavior: "instant" });
+      }
+
+      // Wait 500ms for React virtualized components and intersection observers to mount cards
+      await new Promise((r) => setTimeout(r, 500));
+      reviews = parseFlipkartCardsFromDoc(document);
+
+      if (reviews.length < 3) {
+        // Try scrolling slightly further
+        window.scrollTo({ top: Math.max(2000, document.body.scrollHeight * 0.75), behavior: "instant" });
+        await new Promise((r) => setTimeout(r, 500));
+        reviews = parseFlipkartCardsFromDoc(document);
+      }
+    } catch (_) {} finally {
+      // Restore original scroll position so user experience is not disrupted
+      window.scrollTo({ top: prevY, behavior: "instant" });
+    }
+
+    return reviews;
+  }
+
+  /**
+   * Parse Flipkart review cards from a document (supports modern Batman-Returns, legacy DOMs, and structural fallback)
    */
   function parseFlipkartCardsFromDoc(rootDoc) {
     const reviews = [];
@@ -374,7 +416,7 @@
             const rawRevs = item.review || (item["@type"] === "Product" ? item.review : null);
             if (Array.isArray(rawRevs)) {
               rawRevs.forEach((r) => {
-                const rating = r.reviewRating?.ratingValue || 4;
+                const rating = r.reviewRating?.ratingValue || r.rating || 4;
                 const title = r.headline || r.name || "";
                 const body = r.reviewBody || r.description || "";
                 const validated = cleanAndValidateReview(`${rating} stars`, title, body);
@@ -386,7 +428,9 @@
       });
     } catch (_) {}
 
-    // 2. Selectors for Flipkart review card containers
+    const foundCards = new Set();
+
+    // 2. Selectors for known Flipkart review card containers
     const cardSelectors = [
       "div.EPCmJX",
       "div[class*='EPCmJX']",
@@ -394,54 +438,94 @@
       "div._16PBlm",
       "div._2wzgFH",
       "div.col-12-12 > div._2wzgFH",
-      "div.cPHDOP div._2wzgFH"
+      "div.cPHDOP div._2wzgFH",
+      "div[data-review-id]"
     ];
-    let cards = Array.from(rootDoc.querySelectorAll(cardSelectors.join(", ")));
+    rootDoc.querySelectorAll(cardSelectors.join(", ")).forEach((c) => foundCards.add(c));
 
-    // Fallback: search for cards containing rating badges and traverse to container
-    if (cards.length === 0) {
-      const badges = rootDoc.querySelectorAll("div.XQDdHH, div.Wphh3N, div._3LWZlK, div._1BLPMq, [class*='XQDdHH']");
-      const foundCards = new Set();
-      badges.forEach((b) => {
-        let ancestor = b.parentElement;
-        while (ancestor && ancestor !== rootDoc.body && ancestor.tagName !== "BODY") {
-          const hasBody = ancestor.querySelector("div.ZmyHeo, div.t-ZTKy, div._6K-7Co, [class*='ZmyHeo'], [class*='t-ZTKy']");
-          if (hasBody) {
-            foundCards.add(ancestor);
-            break;
+    // 3. Structural discovery via "Certified Buyer" / "Flipkart Customer" leaf nodes
+    try {
+      const buyerElements = Array.from(rootDoc.querySelectorAll("span, div, p")).filter((el) => {
+        return el.children.length <= 1 && /\b(?:certified\s*buyer|flipkart\s*customer)\b/i.test(el.textContent || "");
+      });
+
+      buyerElements.forEach((badge) => {
+        let p = badge.parentElement;
+        while (p && p !== rootDoc.body && p.tagName !== "BODY") {
+          const pText = p.textContent || "";
+          const multiCheck = pText.match(/certified\s*buyer|flipkart\s*customer/gi) || [];
+          if (multiCheck.length > 1) break; // Exceeded single card container
+
+          if (pText.length > 35 && pText.length < 2500) {
+            const hasRating =
+              /\b[1-5]\s*★|\b[1-5]\s*out\s*of\s*5/i.test(pText) ||
+              p.querySelector("[class*='XQDdHH'], [class*='3LWZlK'], [class*='Wphh3N'], [class*='1BLPMq'], [class*='star']");
+            if (hasRating) {
+              foundCards.add(p);
+              break;
+            }
           }
-          ancestor = ancestor.parentElement;
+          p = p.parentElement;
         }
       });
-      cards = Array.from(foundCards);
+    } catch (_) {}
+
+    // 4. Fallback: Search from star rating badges up to container
+    if (foundCards.size === 0) {
+      try {
+        const starBadges = rootDoc.querySelectorAll(
+          "div.XQDdHH, div.Wphh3N, div._3LWZlK, div._1BLPMq, span.XQDdHH, [class*='XQDdHH'], [class*='_3LWZlK'], [class*='Wphh3N']"
+        );
+        starBadges.forEach((b) => {
+          let ancestor = b.parentElement;
+          while (ancestor && ancestor !== rootDoc.body && ancestor.tagName !== "BODY") {
+            const txt = ancestor.textContent || "";
+            if (txt.length > 35 && txt.length < 2500) {
+              const hasBody =
+                ancestor.querySelector("div.ZmyHeo, div.t-ZTKy, div._6K-7Co, [class*='ZmyHeo'], [class*='t-ZTKy']") ||
+                Array.from(ancestor.querySelectorAll("div, p")).some(
+                  (d) => d.textContent.trim().length > 25 && d.children.length === 0
+                );
+              if (hasBody) {
+                foundCards.add(ancestor);
+                break;
+              }
+            }
+            ancestor = ancestor.parentElement;
+          }
+        });
+      } catch (_) {}
     }
 
-    cards.forEach((card) => {
-      // Star rating: .XQDdHH (modern), .Wphh3N, ._3LWZlK (legacy)
+    // Process every uniquely discovered review card
+    foundCards.forEach((card) => {
+      // 1. Star rating: .XQDdHH (modern), .Wphh3N, ._3LWZlK (legacy), or regex
       const starEl = card.querySelector(
-        "div.XQDdHH, div.Wphh3N, div._3LWZlK, div._1BLPMq, span.XQDdHH, [class*='XQDdHH'], [class*='Wphh3N'], [class*='_3LWZlK']"
+        "div.XQDdHH, div.Wphh3N, div._3LWZlK, div._1BLPMq, span.XQDdHH, [class*='XQDdHH'], [class*='Wphh3N'], [class*='_3LWZlK'], [class*='rating']"
       );
       let starText = "";
       if (starEl) {
         const rawStar = (starEl.textContent || starEl.innerText || "").trim();
-        starText = rawStar ? `${rawStar} stars` : "";
-      } else {
-        const match = (card.textContent || "").match(/\b([1-5])\s*★/);
+        const m = rawStar.match(/([1-5])/);
+        if (m) starText = `${m[1]} stars`;
+      }
+      if (!starText) {
+        const match = (card.textContent || "").match(/\b([1-5])(?:\.0)?\s*(?:★|out\s*of\s*5|stars?)/i);
         if (match) starText = `${match[1]} stars`;
       }
 
-      // Title: p.z9E0IG (modern), p._2-N8zT (legacy)
+      // 2. Title: p.z9E0IG (modern), p._2-N8zT (legacy), or heading
       const titleEl = card.querySelector(
-        "p.z9E0IG, div.z9E0IG, p._2-N8zT, div._2-N8zT, [class*='z9E0IG'], [class*='_2-N8zT'], p[class*='title'], h4, h5"
+        "p.z9E0IG, div.z9E0IG, p._2-N8zT, div._2-N8zT, [class*='z9E0IG'], [class*='_2-N8zT'], p[class*='title'], [class*='reviewTitle'], h4, h5"
       );
       let titleText = "";
       if (titleEl) {
         titleText = (titleEl.textContent || titleEl.innerText || "").trim();
       }
 
-      // Body: div.ZmyHeo (modern), div.t-ZTKy (legacy)
+      // 3. Body: div.ZmyHeo (modern), div.t-ZTKy (legacy), or longest substantive paragraph
       const bodyEl = card.querySelector(
-        "div.ZmyHeo > div > div, div.ZmyHeo, div.t-ZTKy > div > div, div.t-ZTKy, div._6K-7Co, [class*='ZmyHeo'], [class*='t-ZTKy']"
+        "div.ZmyHeo > div > div, div.ZmyHeo, div.t-ZTKy > div > div, div.t-ZTKy, div._6K-7Co, [class*='ZmyHeo'], [class*='t-ZTKy'], [class*='reviewText']"
       );
       let bodyText = "";
       if (bodyEl) {
@@ -449,13 +533,18 @@
         clone.querySelectorAll("span._1BWGvX, span._34Mpda, span[class*='_1BWGvX'], button").forEach((el) => el.remove());
         bodyText = (clone.textContent || clone.innerText || "").replace(/\s*(?:READ\s*MORE|Read\s*More)[.!\s]*$/gi, "").trim();
       } else {
-        const divs = card.querySelectorAll("div, p");
-        for (const d of divs) {
-          const t = (d.textContent || "").trim();
-          if (t.length > 25 && t !== titleText && !t.includes("Certified Buyer") && !t.includes("Permalink")) {
-            bodyText = t.replace(/\s*(?:READ\s*MORE|Read\s*More)[.!\s]*$/gi, "").trim();
-            break;
-          }
+        const paras = Array.from(card.querySelectorAll("div, p"))
+          .filter((el) => el.children.length === 0)
+          .map((el) => (el.textContent || "").trim())
+          .filter(
+            (t) =>
+              t.length > 20 &&
+              t !== titleText &&
+              !/\b(?:certified\s*buyer|flipkart\s*customer|permalink|report)\b/i.test(t)
+          );
+        if (paras.length > 0) {
+          paras.sort((a, b) => b.length - a.length);
+          bodyText = paras[0].replace(/\s*(?:READ\s*MORE|Read\s*More)[.!\s]*$/gi, "").trim();
         }
       }
 
@@ -467,15 +556,15 @@
   }
 
   /**
-   * Harvest Flipkart reviews across multiple pages with parallel fetch & timeout guards
+   * Harvest Flipkart reviews across active DOM + multiple pages with parallel fetch & timeout guards
    */
   async function harvestFlipkartReviews(targetCount = 12) {
     console.log(`[easymode] Harvesting Flipkart reviews (target effort: ${targetCount})...`);
     const allReviews = [];
 
-    // 1. Parse active DOM first (in case already on product page or reviews page)
+    // 1. Parse active DOM first with auto-scroll lazy loading guarantee
     try {
-      const activeDocReviews = parseFlipkartCardsFromDoc(document);
+      const activeDocReviews = await ensureFlipkartReviewsMountedInDOM();
       if (activeDocReviews.length > 0) {
         console.log(`[easymode] Harvested ${activeDocReviews.length} reviews directly from active Flipkart DOM.`);
         allReviews.push(...activeDocReviews);
@@ -488,7 +577,7 @@
     const flipkartInfo = getFlipkartProductInfo();
     console.log("[easymode] Flipkart product info:", flipkartInfo);
 
-    if (flipkartInfo.reviewBaseUrl) {
+    if (flipkartInfo.reviewBaseUrl && allReviews.length < targetCount) {
       const baseUrl = flipkartInfo.reviewBaseUrl;
 
       let pages = [1, 2];
@@ -498,7 +587,7 @@
         pages = [1, 2, 3, 4];
       }
 
-      console.log(`[easymode] Fetching Flipkart review pages [${pages.join(", ")}] from: ${baseUrl}`);
+      console.log(`[easymode] Attempting fetch for Flipkart review pages [${pages.join(", ")}] from: ${baseUrl}`);
 
       const fetchPromises = pages.map(async (p) => {
         const pageUrl = buildFlipkartPageUrl(baseUrl, p);
@@ -613,7 +702,7 @@
       } else {
         rawItems = await harvestFlipkartReviews(maxReviews);
         if (rawItems.length === 0) {
-          rawItems = parseFlipkartCardsFromDoc(document);
+          rawItems = await ensureFlipkartReviewsMountedInDOM();
         }
       }
     } else {
@@ -653,7 +742,9 @@
       return {
         success: false,
         site: platform === "amazon" ? "Amazon" : platform === "flipkart" ? "Flipkart" : "Page",
-        error: "Could not find substantive customer reviews. If on a product page, try opening 'See all reviews' or paste reviews below.",
+        error: platform === "flipkart"
+          ? "Could not find customer reviews on this Flipkart page. If this product has reviews, scroll down to the 'Ratings & Reviews' section or click 'All reviews'."
+          : "Could not find substantive customer reviews. If on a product page, try opening 'See all reviews' or paste reviews below.",
         diagnostics: {
           total_raw: 0,
           total_unique: 0,

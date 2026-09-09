@@ -65,11 +65,12 @@ pip install --quiet -r requirements.txt
 # Offline mode details banner
 if [ "$OFFLINE_MODE" -eq 1 ]; then
     echo "--------------------------------------------------"
-    echo "📦 Pre-extracted Product: Lakmé Sun Expert SPF 50"
-    echo "🆔 Target ASIN: B00CS1KT96"
-    echo "📊 Reviews Dataset: 30 verified customer reviews pre-loaded"
-    echo "🌐 Offline Demo Page: http://localhost:8000/demo"
-    echo "💡 Open the link above in Chrome with easymode extension."
+    echo "📦 Pre-extracted Datasets Pre-Loaded (100% Offline):"
+    echo "   1. Amazon:   Lakmé Sun Expert SPF 50 (ASIN: B00CS1KT96)"
+    echo "      👉 URL:   http://localhost:8000/demo"
+    echo "   2. Flipkart: Apple iPhone 15 Black 128GB (PID: MOBGTAGPTB3VS24W)"
+    echo "      👉 URL:   http://localhost:8000/demo-flipkart"
+    echo "💡 Open either link above in Chrome with easymode extension."
     echo "   100% offline demonstration • Zero internet required"
     echo "--------------------------------------------------"
 fi
@@ -102,7 +103,8 @@ fi
 echo "🚀 Starting FastAPI server on http://127.0.0.1:8000..."
 echo "📋 Health check: http://127.0.0.1:8000/health"
 if [ "$OFFLINE_MODE" -eq 1 ]; then
-    echo "👉 Demo page:  http://127.0.0.1:8000/demo"
+    echo "👉 Amazon Demo:    http://127.0.0.1:8000/demo"
+    echo "👉 Flipkart Demo: http://127.0.0.1:8000/demo-flipkart"
 fi
 echo "=================================================="
 

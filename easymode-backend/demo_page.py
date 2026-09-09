@@ -104,21 +104,7 @@ def render_demo_html() -> str:
     if "<base " not in raw_html.lower():
         raw_html = re.sub(r"(<head[^>]*>)", r'\1\n<base href="https://www.amazon.in/">', raw_html, count=1, flags=re.IGNORECASE)
 
-    # 2. Inject subtle top offline demo ribbon
-    demo_banner = """
-    <div id="easymode-offline-ribbon" style="background:#11151c; color:#ffffff; border-bottom:2px solid #ff9900; padding:8px 20px; font-size:13px; display:flex; justify-content:space-between; align-items:center; position:sticky; top:0; z-index:9999999; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; box-shadow: 0 2px 8px rgba(0,0,0,0.5);">
-      <div style="display:flex; align-items:center; gap:12px;">
-        <span style="background:#ff9900; color:#000; font-weight:800; font-size:11px; padding:3px 8px; border-radius:4px; letter-spacing:0.5px;">OFFLINE DEMO</span>
-        <span style="color:#e3e6e6;">Actual Amazon Product Page &bull; ASIN: <b>B00CS1KT96</b> &bull; Lakmé Sun Expert SPF 50 (30 Customer Reviews)</span>
-      </div>
-      <div style="color:#a2a8b3; font-size:12px;">
-        Ready for easymode extension &bull; 100% Offline
-      </div>
-    </div>
-    """
-    raw_html = re.sub(r"(<body[^>]*>)", r"\1\n" + demo_banner, raw_html, count=1, flags=re.IGNORECASE)
-
-    # 3. Inject reviews into #localTopReviewsList
+    # 2. Inject reviews into #localTopReviewsList
     if 'id="localTopReviewsList"' in raw_html:
         raw_html = re.sub(
             r'(id=["\']localTopReviewsList["\'][^>]*>)',
@@ -254,16 +240,6 @@ def render_flipkart_demo_html() -> str:
   </script>
 </head>
 <body id="flipkartDemo" data-platform="flipkart">
-  <div style="background:#11151c; color:#ffffff; border-bottom:2px solid #2874f0; padding:8px 20px; font-size:13px; display:flex; justify-content:space-between; align-items:center; position:sticky; top:0; z-index:9999999; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
-    <div style="display:flex; align-items:center; gap:12px;">
-      <span style="background:#2874f0; color:#fff; font-weight:800; font-size:11px; padding:3px 8px; border-radius:4px; letter-spacing:0.5px;">FLIPKART OFFLINE DEMO</span>
-      <span style="color:#e3e6e6;">Flipkart Modern DOM &bull; PID: <b>{pid}</b> &bull; Item: <b>{item_id}</b> &bull; {html.escape(product_name)}</span>
-    </div>
-    <div style="color:#a2a8b3; font-size:12px;">
-      Ready for easymode extension &bull; 100% Offline
-    </div>
-  </div>
-
   <header class="fk-header">
     <div class="fk-logo">Flipkart<span>Explore Plus</span></div>
     <div style="background: white; border-radius: 2px; padding: 8px 16px; width: 450px; color: #878787; font-size: 14px;">
