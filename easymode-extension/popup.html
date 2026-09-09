@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>easymode - Local AI Product Decider</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="header">
+      <div class="brand-row">
+        <div class="brand">
+          <div class="brand-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+            </svg>
+          </div>
+          <div class="brand-text">
+            <h1>easymode</h1>
+            <span class="tagline">Local AI Product Decider</span>
+          </div>
+        </div>
+
+        <!-- Backend Status Indicator -->
+        <div id="backendStatus" class="status-pill status-checking" title="Checking local backend server...">
+          <span class="status-dot"></span>
+          <span id="statusText" class="status-label">Checking...</span>
+        </div>
+      </div>
+
+      <!-- Model Badge -->
+      <div class="meta-row">
+        <span id="modelBadge" class="model-badge">Model: llama3.2:1b</span>
+        <span id="siteBadge" class="site-badge">Detecting page...</span>
+      </div>
+    </header>
+
+    <!-- Error / Notice Banner -->
+    <div id="alertBanner" class="alert-banner hidden">
+      <div class="alert-icon">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"></circle>
+          <line x1="12" y1="8" x2="12" y2="12"></line>
+          <line x1="12" y1="16" x2="12.01" y2="16"></line>
+        </svg>
+      </div>
+      <div class="alert-content">
+        <div id="alertTitle" class="alert-title">Backend Offline</div>
+        <div id="alertMessage" class="alert-message">
+          FastAPI server not detected on localhost:8000.<br>
+          Run: <code>cd easymode-backend &amp;&amp; ./run.sh</code>
+        </div>
+      </div>
+      <button id="alertRetryBtn" class="alert-retry-btn" title="Retry connection">Retry</button>
+    </div>
+
+    <!-- Main Action Container -->
+    <section class="action-section">
+      <button id="analyzeBtn" class="btn-primary">
+        <span class="btn-spinner hidden" id="btnSpinner"></span>
+        <span class="btn-icon" id="btnIcon">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M2 12h20"></path>
+            <path d="M20 12l-4-4"></path>
+            <path d="M20 12l-4 4"></path>
+            <path d="M6 8l-4 4 4 4"></path>
+          </svg>
+        </span>
+        <span id="btnText">Analyze Reviews</span>
+      </button>
+
+      <div id="loadingStatus" class="loading-status hidden">
+        <div class="loading-status-content">
+          <span class="pulse-icon">⏳</span>
+          <span id="loadingStatusText">Scraping reviews from active page...</span>
+        </div>
+        <button id="cancelBtn" class="btn-cancel" type="button" title="Cancel review analysis">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+          <span>Cancel</span>
+        </button>
+      </div>
+    </section>
+
+    <!-- Manual Review Input (Expandable fallback for custom input/testing) -->
+    <details class="manual-input-details">
+      <summary class="manual-input-summary">
+        <span>Or paste reviews manually</span>
+        <svg class="chevron-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="6 9 12 15 18 9"></polyline>
+        </svg>
+      </summary>
+      <div class="manual-input-body">
+        <textarea id="manualReviewsInput" placeholder="Paste 1 or more customer reviews here (separated by empty lines)..." rows="4"></textarea>
+        <button id="manualAnalyzeBtn" class="btn-secondary">Analyze Pasted Reviews</button>
+      </div>
+    </details>
+
+    <!-- Results Container -->
+    <main id="resultsContainer" class="results-container hidden">
+      <!-- Top Decision & Score Card -->
+      <div class="card decision-score-card">
+        <div class="decision-header">
+          <span class="card-label">AI Decision</span>
+          <div id="decisionBadge" class="decision-pill badge-strong-buy">Strong Buy</div>
+        </div>
+
+        <div class="score-container">
+          <div class="score-meta">
+            <div class="score-number-row">
+              <span id="scoreValue" class="score-val">--</span>
+              <span class="score-total">/100</span>
+            </div>
+            <span class="score-title">Satisfaction Score</span>
+          </div>
+
+          <div class="score-meter-bar">
+            <div id="scoreMeterFill" class="score-meter-fill" style="width: 0%;"></div>
+          </div>
+
+          <div id="datasetBar" class="dataset-bar hidden">
+            <div class="dataset-pill">
+              <span id="datasetCount" class="dataset-count">-- Reviews Analyzed</span>
+              <span id="datasetBreakdown" class="dataset-breakdown">Balanced Distribution</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- The Verdict Card -->
+      <div class="card verdict-card">
+        <div class="card-header">
+          <div class="card-header-title">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+            </svg>
+            <span>The Verdict</span>
+          </div>
+        </div>
+        <div id="verdictText" class="verdict-body">
+          Analyzing product feedback...
+        </div>
+      </div>
+
+      <!-- Pros Card -->
+      <div class="card pros-card">
+        <div class="card-header">
+          <div class="card-header-title text-success">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+              <polyline points="22 4 12 14.01 9 11.01"></polyline>
+            </svg>
+            <span>Pros &amp; Strengths</span>
+          </div>
+        </div>
+        <ul id="prosList" class="checklist pros-checklist">
+          <!-- Populated dynamically -->
+        </ul>
+      </div>
+
+      <!-- Cons Card -->
+      <div class="card cons-card">
+        <div class="card-header">
+          <div class="card-header-title text-danger">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"></circle>
+              <line x1="15" y1="9" x2="9" y2="15"></line>
+              <line x1="9" y1="9" x2="15" y2="15"></line>
+            </svg>
+            <span>Cons &amp; Warnings</span>
+          </div>
+        </div>
+        <ul id="consList" class="checklist cons-checklist">
+          <!-- Populated dynamically -->
+        </ul>
+      </div>
+
+      <!-- Footer Info -->
+      <div class="results-footer">
+        <span id="reviewCountMeta" class="meta-reviews">Analyzed 8 reviews</span>
+        <button id="resetBtn" class="btn-text">Clear &amp; Reset</button>
+      </div>
+    </main>
+
+    <!-- Footer / Debug Trigger -->
+    <footer class="app-footer">
+      <div class="footer-meta">
+        <span class="version-tag">easymode v1.3</span>
+      </div>
+      <button id="debugToggleBtn" class="debug-toggle-btn" type="button" title="Toggle Debug Tools & Review Effort (Cmd+Shift+D)">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="3"></circle>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1Z"></path>
+        </svg>
+        <span id="debugToggleLabel">Debug &amp; Effort</span>
+      </button>
+    </footer>
+
+    <!-- Discreet Debug Drawer (Hidden by default for demos) -->
+    <div id="debugDrawer" class="debug-drawer hidden">
+      <div class="debug-drawer-header">
+        <div class="debug-title-row">
+          <span class="debug-badge">DEBUG CONSOLE</span>
+          <span class="debug-shortcut-hint">Cmd+Shift+D</span>
+        </div>
+        <button id="debugCloseBtn" class="debug-close-btn" type="button" title="Close Debug View">&times;</button>
+      </div>
+
+      <!-- 0. Offline Demo Mode (Discreet, visible in debug view) -->
+      <div id="debugOfflineSection" class="debug-section hidden">
+        <div class="debug-section-title">
+          <span>Secret Demo Mode</span>
+          <span class="demo-status-pill">OFFLINE READY</span>
+        </div>
+        <div class="offline-link-row">
+          <a href="http://localhost:8000/demo" id="debugDemoLink" target="_blank" class="offline-demo-link">
+            <span>👉 Open Offline Amazon Page (B00CS1KT96)</span>
+          </a>
+        </div>
+        <div class="debug-subtext">Lakmé Sun Expert SPF 50 &bull; 30 pre-loaded reviews &bull; Zero internet needed</div>
+      </div>
+
+      <!-- 1. Effort Controls -->
+      <div class="debug-section">
+        <div class="debug-section-title">
+          <span>Inference Effort (Max Reviews)</span>
+          <span id="effortValueBadge" class="effort-badge">12 Reviews</span>
+        </div>
+        <div class="effort-presets">
+          <button type="button" class="effort-btn" data-effort="6" title="Fast Demo (~8-12s on CPU)">
+            <span class="effort-icon">⚡</span> Fast (6)
+          </button>
+          <button type="button" class="effort-btn active" data-effort="12" title="Balanced Depth (~20-28s on CPU)">
+            <span class="effort-icon">⚖️</span> Balanced (12)
+          </button>
+          <button type="button" class="effort-btn" data-effort="25" title="Deep Analysis (~60-70s on CPU)">
+            <span class="effort-icon">🔬</span> Deep (25)
+          </button>
+        </div>
+        <div class="effort-slider-row">
+          <input type="range" id="effortSlider" min="3" max="30" step="1" value="12" class="effort-slider">
+          <span id="effortSliderNum" class="slider-val">12</span>
+        </div>
+        <div class="debug-subtext">Adjusts max reviews fed to Ollama. Lower effort speeds up live demos.</div>
+      </div>
+
+      <!-- 2. Live Diagnostics Grid -->
+      <div class="debug-section">
+        <div class="debug-section-title">Live Pipeline Metrics</div>
+        <div class="debug-metrics-grid">
+          <div class="metric-box">
+            <span class="metric-label">Pipeline Stage</span>
+            <span id="debugStageVal" class="metric-val text-accent">Idle</span>
+          </div>
+          <div class="metric-box">
+            <span class="metric-label">Harvested Raw</span>
+            <span id="debugHarvestedVal" class="metric-val">0</span>
+          </div>
+          <div class="metric-box">
+            <span class="metric-label">Active for AI</span>
+            <span id="debugActiveVal" class="metric-val">0</span>
+          </div>
+          <div class="metric-box">
+            <span class="metric-label">Inference Time</span>
+            <span id="debugTimeVal" class="metric-val">0.0s</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 3. Real-Time Activity Log -->
+      <div class="debug-section">
+        <div class="debug-section-header">
+          <span class="debug-section-title">Activity Log</span>
+          <div class="debug-log-actions">
+            <button id="copyLogBtn" type="button" class="debug-mini-btn" title="Copy log to clipboard">Copy</button>
+            <button id="clearLogBtn" type="button" class="debug-mini-btn" title="Clear log">Clear</button>
+          </div>
+        </div>
+        <div id="debugConsoleLog" class="debug-console">
+          <div class="log-entry log-system">[System] Debug logger initialized. Waiting for user action.</div>
+        </div>
+      </div>
+
+      <!-- 4. Active Reviews Inspector -->
+      <div class="debug-section">
+        <details class="reviews-inspector-details">
+          <summary class="reviews-inspector-summary">
+            <span id="inspectorTitle">Inspect Active Reviews (0)</span>
+            <span class="inspector-badge">JSON Payload</span>
+          </summary>
+          <div id="inspectorReviewsList" class="inspector-reviews-list">
+            <div class="empty-inspector-note">No reviews actively processed yet. Run "Analyze Reviews" to inspect.</div>
+          </div>
+        </details>
+      </div>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
