@@ -98,12 +98,12 @@
     if (host.includes("amazon.")) return "amazon";
     if (host.includes("flipkart.")) return "flipkart";
     if (host.includes("imdb.")) return "imdb";
-    // Secret Offline Flipkart Demo detection (served at localhost:8000/demo-flipkart)
-    if ((host === "localhost" || host === "127.0.0.1") && (path.includes("/demo-flipkart") || document.getElementById("flipkartDemo") || document.querySelector(".EPCmJX, [data-platform='flipkart']"))) {
+    // Secret Offline Flipkart Demo detection (served at localhost:8000)
+    if ((host === "localhost" || host === "127.0.0.1") && (path.includes("flipkart") || document.getElementById("flipkartDemo") || document.querySelector(".EPCmJX, [data-platform='flipkart']"))) {
       return "flipkart";
     }
-    // Secret Offline Amazon Demo detection (served at localhost:8000/demo)
-    if ((host === "localhost" || host === "127.0.0.1") && (path.includes("/demo") || document.getElementById("productTitle") || document.getElementById("ASIN"))) {
+    // Secret Offline Amazon Demo detection (served at localhost:8000)
+    if ((host === "localhost" || host === "127.0.0.1") && (path.includes("/demo") || path.includes("/dp/") || path.includes("/gp/") || document.getElementById("productTitle") || document.getElementById("ASIN"))) {
       return "amazon";
     }
     return "generic";
@@ -111,7 +111,7 @@
 
   function getAmazonAsin() {
     const path = window.location.pathname;
-    const match = path.match(/(?:dp|gp\/product|product-reviews|gp\/aw\/d)\/([A-Z0-9]{10})/i);
+    const match = path.match(/(?:dp|gp\/product|product-reviews|gp\/aw\/d|amazon)\/([A-Z0-9]{10})/i);
     if (match) return match[1];
 
     const searchMatch = window.location.search.match(/[?&]asin=([A-Z0-9]{10})/i);
@@ -264,7 +264,7 @@
 
     // 1. Extract PID (e.g. ?pid=MOBGTAGPTB3VS24W)
     let pid = null;
-    const pidMatch = search.match(/[?&]pid=([a-zA-Z0-9]+)/i) || path.match(/[?&]pid=([a-zA-Z0-9]+)/i) || href.match(/[?&#]pid=([a-zA-Z0-9]+)/i);
+    const pidMatch = search.match(/[?&]pid=([a-zA-Z0-9]+)/i) || path.match(/[?&]pid=([a-zA-Z0-9]+)/i) || href.match(/[?&#]pid=([a-zA-Z0-9]+)/i) || path.match(/\/(?:demo\/)?flipkart\/([a-zA-Z0-9]+)/i);
     if (pidMatch) {
       pid = pidMatch[1];
     } else {

@@ -257,26 +257,20 @@ async function checkBackendHealth() {
   }
 }
 
-function updateOfflineDemoUI(demoUrl, flipkartDemoUrl = "http://localhost:8000/demo-flipkart") {
+function updateOfflineDemoUI(demoUrl = "http://localhost:8000/demo", flipkartDemoUrl = "http://localhost:8000/demo-flipkart") {
   const section = document.getElementById("debugOfflineSection");
   if (section) {
     section.classList.remove("hidden");
-    const linkEl = document.getElementById("debugDemoLink");
-    if (linkEl) {
-      linkEl.href = demoUrl;
-      linkEl.onclick = (e) => {
+    const demoLinks = section.querySelectorAll(".offline-demo-link");
+    demoLinks.forEach((link) => {
+      link.onclick = (e) => {
         e.preventDefault();
-        chrome.tabs.create({ url: demoUrl });
+        const targetUrl = link.getAttribute("href");
+        if (targetUrl) {
+          chrome.tabs.create({ url: targetUrl });
+        }
       };
-    }
-    const fkLinkEl = document.getElementById("debugFlipkartDemoLink");
-    if (fkLinkEl) {
-      fkLinkEl.href = flipkartDemoUrl;
-      fkLinkEl.onclick = (e) => {
-        e.preventDefault();
-        chrome.tabs.create({ url: flipkartDemoUrl });
-      };
-    }
+    });
   }
 }
 

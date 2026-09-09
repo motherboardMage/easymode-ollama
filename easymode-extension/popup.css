@@ -1091,23 +1091,78 @@ textarea#manualReviewsInput:focus {
   margin-top: 4px;
 }
 
+.demo-platform-group {
+  margin-top: 8px;
+}
+
+.demo-group-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #94a3b8;
+  margin-bottom: 4px;
+}
+
+.demo-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
 .offline-demo-link {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   background: #141923;
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 6px;
-  padding: 8px 10px;
+  padding: 6px 8px;
   color: #f8fafc;
   text-decoration: none;
   font-size: 11.5px;
   font-weight: 500;
   transition: all 0.15s ease;
+  cursor: pointer;
 }
 
 .offline-demo-link:hover {
   background: #1c2331;
   border-color: rgba(255, 255, 255, 0.25);
   color: #ffffff;
+}
+
+.badge-tag {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.tag-buy {
+  background: rgba(34, 197, 94, 0.15);
+  color: #4ade80;
+  border: 1px solid rgba(34, 197, 94, 0.3);
+}
+
+.tag-mixed {
+  background: rgba(234, 179, 8, 0.15);
+  color: #facc15;
+  border: 1px solid rgba(234, 179, 8, 0.3);
+}
+
+.tag-pass {
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.demo-link-title {
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* Utility classes */

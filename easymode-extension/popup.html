@@ -213,20 +213,58 @@
       <!-- 0. Offline Demo Mode (Discreet, visible in debug view) -->
       <div id="debugOfflineSection" class="debug-section hidden">
         <div class="debug-section-title">
-          <span>Secret Demo Mode</span>
+          <span>Secret Demo Catalog (9 Products)</span>
           <span class="demo-status-pill">OFFLINE READY</span>
         </div>
-        <div class="offline-link-row">
-          <a href="http://localhost:8000/demo" id="debugDemoLink" target="_blank" class="offline-demo-link">
-            <span>👉 Open Offline Amazon Page (B00CS1KT96)</span>
-          </a>
+        
+        <div class="demo-platform-group">
+          <div class="demo-group-label">🛒 Amazon Demos:</div>
+          <div class="demo-grid">
+            <a href="http://localhost:8000/demo" target="_blank" class="offline-demo-link">
+              <span class="badge-tag tag-buy">Strong Buy</span>
+              <span class="demo-link-title">Lakmé Sun Expert SPF 50</span>
+            </a>
+            <a href="http://localhost:8000/demo/amazon/B097RH8S8Q" target="_blank" class="offline-demo-link">
+              <span class="badge-tag tag-buy">Strong Buy</span>
+              <span class="demo-link-title">Philips Digital Air Fryer</span>
+            </a>
+            <a href="http://localhost:8000/demo/amazon/B0CX23P5S5" target="_blank" class="offline-demo-link">
+              <span class="badge-tag tag-buy">Strong Buy</span>
+              <span class="demo-link-title">Apple MacBook Air 13" M3</span>
+            </a>
+            <a href="http://localhost:8000/demo/amazon/B09XS7JWHH" target="_blank" class="offline-demo-link">
+              <span class="badge-tag tag-mixed">Mixed</span>
+              <span class="demo-link-title">Sony WH-1000XM5 ANC</span>
+            </a>
+            <a href="http://localhost:8000/demo/amazon/B071Z8M4KX" target="_blank" class="offline-demo-link">
+              <span class="badge-tag tag-pass">Pass</span>
+              <span class="demo-link-title">boAt Bassheads 100 Wired</span>
+            </a>
+          </div>
         </div>
-        <div class="offline-link-row" style="margin-top: 6px;">
-          <a href="http://localhost:8000/demo-flipkart" id="debugFlipkartDemoLink" target="_blank" class="offline-demo-link">
-            <span>👉 Open Offline Flipkart Page (iPhone 15)</span>
-          </a>
+
+        <div class="demo-platform-group">
+          <div class="demo-group-label">🛍️ Flipkart Demos:</div>
+          <div class="demo-grid">
+            <a href="http://localhost:8000/demo-flipkart" target="_blank" class="offline-demo-link">
+              <span class="badge-tag tag-buy">Strong Buy</span>
+              <span class="demo-link-title">Apple iPhone 15 (128 GB)</span>
+            </a>
+            <a href="http://localhost:8000/demo/flipkart/ACCG5HFXMGBR8Z4H" target="_blank" class="offline-demo-link">
+              <span class="badge-tag tag-buy">Strong Buy</span>
+              <span class="demo-link-title">boAt Airdopes 141 TWS</span>
+            </a>
+            <a href="http://localhost:8000/demo/flipkart/SMWGG5T2C5QZYGBM" target="_blank" class="offline-demo-link">
+              <span class="badge-tag tag-mixed">Mixed</span>
+              <span class="demo-link-title">Noise ColorFit Pulse 2 Max</span>
+            </a>
+            <a href="http://localhost:8000/demo/flipkart/TRMG6M5NZYHH7GKF" target="_blank" class="offline-demo-link">
+              <span class="badge-tag tag-pass">Pass</span>
+              <span class="demo-link-title">Nova NHT 1076 Trimmer</span>
+            </a>
+          </div>
         </div>
-        <div class="debug-subtext">Lakmé Sun Expert SPF 50 &amp; Apple iPhone 15 &bull; 30 reviews each &bull; 100% Offline</div>
+        <div class="debug-subtext">30-36 pre-extracted customer reviews per product &bull; 100% Offline &bull; Instant zero-latency inference</div>
       </div>
 
       <!-- 1. Effort Controls -->

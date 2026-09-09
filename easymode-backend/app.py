@@ -4,7 +4,7 @@ import json
 import logging
 import os
 import re
-from typing import List
+from typing import List, Optional, Dict, Any
 from fastapi import FastAPI, HTTPException, status, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
@@ -87,6 +87,8 @@ class AnalyzeRequest(BaseModel):
     )
     total_analyzed: int = 0
     stats: dict = None
+    asin: Optional[str] = None
+    product_title: Optional[str] = None
 
 
 class AnalyzeResponse(BaseModel):
@@ -255,48 +257,90 @@ def robust_parse_model_json(raw_text: str) -> dict:
     raise ValueError(f"Could not extract valid review decision data from model response: {raw_text[:180]}")
 
 
+def resolve_product_from_payload(payload: AnalyzeRequest, cleaned_reviews: List[str]) -> str:
+    """Detect product identifier (ASIN or PID) from payload metadata or review keywords."""
+    if payload.asin:
+        p_info = demo_page.get_product_info(payload.asin)
+        if p_info:
+            return p_info["id"]
+
+    combined_sample = (" ".join(cleaned_reviews[:8]) + " " + (payload.product_title or "")).lower()
+    if any(w in combined_sample for w in ["macbook", "m3", "apple silicon", "macos", "retina", "m3 chip"]):
+        return "B0CX23P5S5"
+    if any(w in combined_sample for w in ["headphone", "xm5", "sony", "wh-1000", "noise cancelling", "anc"]):
+        return "B09XS7JWHH"
+    if any(w in combined_sample for w in ["air fryer", "airfryer", "philips", "rapid air", "fryer", "crisp"]):
+        return "B097RH8S8Q"
+    if any(w in combined_sample for w in ["basshead", "boat basshead", "wired earphone", "3.5mm", "hawk"]):
+        return "B071Z8M4KX"
+    if any(w in combined_sample for w in ["smartwatch", "pulse 2", "pulse 2 max", "noisefit", "noise colorfit"]):
+        return "SMWGG5T2C5QZYGBM"
+    if any(w in combined_sample for w in ["airdopes", "airdopes 141", "beast mode", "enx", "tws"]):
+        return "ACCG5HFXMGBR8Z4H"
+    if any(w in combined_sample for w in ["trimmer", "nht 1076", "cordless trimmer", "beard trimmer", "nova"]):
+        return "TRMG6M5NZYHH7GKF"
+    if any(w in combined_sample for w in ["iphone", "iphone 15", "dynamic island", "apple iphone"]):
+        return "MOBGTAGPTB3VS24W"
+
+    return "B00CS1KT96"
+
+
 @app.get("/health")
 async def health_check(background_tasks: BackgroundTasks):
     """Health check endpoint that also triggers background model pre-warming."""
     background_tasks.add_task(warm_up_model)
-    flipkart_offline = demo_page.load_flipkart_offline_data()
+    catalog = demo_page.get_demo_catalog()
     return {
         "status": "online",
         "model": OLLAMA_MODEL,
         "offline_mode": EASYMODE_OFFLINE,
+        "demo_catalog_count": len(catalog),
         "demo_url": "http://localhost:8000/demo",
-        "demo_asin": OFFLINE_DATA.get("asin", "B00CS1KT96"),
-        "demo_product": OFFLINE_DATA.get("product_name", "Lakmé Sun Expert SPF 50"),
+        "demo_asin": "B00CS1KT96",
+        "demo_product": "Lakmé Sun Expert SPF 50",
         "demo_flipkart_url": "http://localhost:8000/demo-flipkart",
-        "demo_flipkart_pid": flipkart_offline.get("pid", "MOBGTAGPTB3VS24W"),
-        "demo_flipkart_product": flipkart_offline.get("product_name", "Apple iPhone 15 (Black, 128 GB)")
+        "demo_flipkart_pid": "MOBGTAGPTB3VS24W",
+        "demo_flipkart_product": "Apple iPhone 15 (Black, 128 GB)"
+    }
+
+
+@app.get("/api/demo-catalog")
+async def get_demo_catalog():
+    """Returns the complete catalog of all 9 pre-extracted offline demonstration products."""
+    return {
+        "products": demo_page.get_demo_catalog(),
+        "total": len(demo_page.get_demo_catalog())
     }
 
 
 @app.get("/demo", response_class=HTMLResponse)
-async def get_demo_page():
-    """Serves the self-contained offline Amazon product page for Lakmé Sun Expert SPF 50 (B00CS1KT96)."""
-    return HTMLResponse(content=demo_page.render_demo_html(), status_code=200)
+@app.get("/demo/amazon", response_class=HTMLResponse)
+@app.get("/demo/amazon/{asin}", response_class=HTMLResponse)
+async def get_demo_page(asin: str = "B00CS1KT96"):
+    """Serves the self-contained offline Amazon product page for any catalog ASIN."""
+    return HTMLResponse(content=demo_page.render_amazon_demo_html(asin), status_code=200)
 
 
 @app.get("/demo-flipkart", response_class=HTMLResponse)
 @app.get("/demo/flipkart", response_class=HTMLResponse)
-async def get_flipkart_demo_page():
-    """Serves the self-contained offline Flipkart product page for Apple iPhone 15."""
-    return HTMLResponse(content=demo_page.render_flipkart_demo_html(), status_code=200)
+@app.get("/demo/flipkart/{pid}", response_class=HTMLResponse)
+async def get_flipkart_demo_page(pid: str = "MOBGTAGPTB3VS24W"):
+    """Serves the self-contained offline Flipkart product page for any catalog PID."""
+    return HTMLResponse(content=demo_page.render_flipkart_demo_html(pid), status_code=200)
 
 
 @app.get("/{slug}/product-reviews/{item_id}", response_class=HTMLResponse)
 @app.get("/{slug}/p/{item_id}", response_class=HTMLResponse)
-async def get_flipkart_demo_reviews_page(slug: str, item_id: str):
-    """Handles Flipkart review endpoints so multi-page pagination succeeds effortlessly offline."""
-    return HTMLResponse(content=demo_page.render_flipkart_demo_html(), status_code=200)
+async def get_flipkart_demo_reviews_page(slug: str, item_id: str, pid: Optional[str] = None):
+    """Handles Flipkart review endpoints so multi-page pagination and deep links succeed effortlessly offline."""
+    target_id = pid if pid else item_id
+    return HTMLResponse(content=demo_page.render_flipkart_demo_html(target_id), status_code=200)
 
 
 @app.get("/api/demo-flipkart-reviews")
-async def get_demo_flipkart_reviews():
-    """Returns the pre-extracted JSON reviews dataset for Flipkart Apple iPhone 15."""
-    return demo_page.load_flipkart_offline_data()
+async def get_demo_flipkart_reviews(pid: Optional[str] = None):
+    """Returns the pre-extracted JSON reviews dataset for Flipkart products."""
+    return demo_page.load_flipkart_offline_data(pid or "MOBGTAGPTB3VS24W")
 
 
 @app.get("/product-reviews/{asin}", response_class=HTMLResponse)
@@ -305,15 +349,13 @@ async def get_demo_flipkart_reviews():
 @app.get("/dp/{asin}", response_class=HTMLResponse)
 async def get_demo_reviews_page(asin: str, path: str = ""):
     """Fallback handler for Amazon URLs so offline review scraping and navigation succeed effortlessly."""
-    return HTMLResponse(content=demo_page.render_demo_html(), status_code=200)
+    return HTMLResponse(content=demo_page.render_amazon_demo_html(asin), status_code=200)
 
 
 @app.get("/api/demo-reviews")
-async def get_demo_reviews():
-    """Returns the pre-extracted JSON reviews dataset for Lakmé Sun Expert (B00CS1KT96)."""
-    if OFFLINE_DATA:
-        return OFFLINE_DATA
-    return demo_page.load_offline_data()
+async def get_demo_reviews(asin: Optional[str] = None):
+    """Returns the pre-extracted JSON reviews dataset for Amazon products."""
+    return demo_page.load_offline_data(asin or "B00CS1KT96")
 
 
 @app.get("/analysis/latest")
@@ -374,11 +416,13 @@ async def analyze_reviews(payload: AnalyzeRequest):
 
     # If payload is empty or offline mode is requested, use pre-extracted offline dataset
     if not cleaned_reviews and (EASYMODE_OFFLINE or payload.reviews == ["__offline_demo__"]):
-        logger.info("Using pre-extracted offline reviews for ASIN B00CS1KT96...")
-        demo_reviews = OFFLINE_DATA.get("reviews", [])
+        prod_id = resolve_product_from_payload(payload, [])
+        logger.info(f"Using pre-extracted offline reviews for {prod_id}...")
+        p_data = demo_page.load_product_reviews(prod_id)
+        demo_reviews = p_data.get("reviews", [])
         cleaned_reviews = [r.strip() for r in demo_reviews if r and len(r.strip()) > 10]
         if not payload.stats:
-            payload.stats = OFFLINE_DATA.get("stats")
+            payload.stats = p_data.get("stats")
         payload.total_analyzed = len(cleaned_reviews)
 
     if not cleaned_reviews:
@@ -495,24 +539,19 @@ async def analyze_reviews(payload: AnalyzeRequest):
     except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
         logger.error(f"Connection to Ollama failed: {exc}")
         if EASYMODE_OFFLINE:
-            logger.warning("Ollama unreachable in offline demo mode. Serving high-fidelity cached synthesis for ASIN B00CS1KT96.")
+            prod_id = resolve_product_from_payload(payload, cleaned_reviews)
+            logger.warning(f"Ollama unreachable in offline demo mode. Serving high-fidelity cached synthesis for {prod_id}.")
+            synth = demo_page.get_cached_synthesis(prod_id)
+            p_data = demo_page.load_product_reviews(prod_id)
+            p_stats = payload.stats or p_data.get("stats")
             return AnalyzeResponse(
-                decision="Strong Buy",
-                score=78,
-                pros=[
-                    "Ultra-matte finish with 4-5 hour oil control for oily skin",
-                    "Absorbs rapidly within seconds with zero sticky residue",
-                    "Reliable broad spectrum SPF 50 PA+++ sun protection",
-                    "Non-comedogenic formula that does not trigger acne breakouts"
-                ],
-                cons=[
-                    "Noticeable floral perfume fragrance may irritate sensitive skin",
-                    "Can leave a chalky white cast on deeper dark complexions",
-                    "Slightly thick lotion consistency requires thorough blending"
-                ],
-                verdict="Lakmé Sun Expert SPF 50 is an exceptional daily sunscreen for oily and combination skin types seeking a non-greasy matte finish. Those with very dark skin tones or sensitivity to added floral fragrance should consider fragrance-free alternatives.",
-                total_analyzed=payload.total_analyzed or 30,
-                stats=payload.stats or OFFLINE_DATA.get("stats")
+                decision=synth["decision"],
+                score=synth["score"],
+                pros=synth["pros"],
+                cons=synth["cons"],
+                verdict=synth["verdict"],
+                total_analyzed=payload.total_analyzed or (p_stats.get("total", 30) if p_stats else 30),
+                stats=p_stats
             )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -521,24 +560,19 @@ async def analyze_reviews(payload: AnalyzeRequest):
     except httpx.TimeoutException as exc:
         logger.error(f"Ollama request timed out after {OLLAMA_TIMEOUT}s: {exc}")
         if EASYMODE_OFFLINE:
-            logger.warning("Ollama timed out in offline demo mode. Serving high-fidelity cached synthesis for ASIN B00CS1KT96.")
+            prod_id = resolve_product_from_payload(payload, cleaned_reviews)
+            logger.warning(f"Ollama timed out in offline demo mode. Serving high-fidelity cached synthesis for {prod_id}.")
+            synth = demo_page.get_cached_synthesis(prod_id)
+            p_data = demo_page.load_product_reviews(prod_id)
+            p_stats = payload.stats or p_data.get("stats")
             return AnalyzeResponse(
-                decision="Strong Buy",
-                score=78,
-                pros=[
-                    "Ultra-matte finish with 4-5 hour oil control for oily skin",
-                    "Absorbs rapidly within seconds with zero sticky residue",
-                    "Reliable broad spectrum SPF 50 PA+++ sun protection",
-                    "Non-comedogenic formula that does not trigger acne breakouts"
-                ],
-                cons=[
-                    "Noticeable floral perfume fragrance may irritate sensitive skin",
-                    "Can leave a chalky white cast on deeper dark complexions",
-                    "Slightly thick lotion consistency requires thorough blending"
-                ],
-                verdict="Lakmé Sun Expert SPF 50 is an exceptional daily sunscreen for oily and combination skin types seeking a non-greasy matte finish. Those with very dark skin tones or sensitivity to added floral fragrance should consider fragrance-free alternatives.",
-                total_analyzed=payload.total_analyzed or 30,
-                stats=payload.stats or OFFLINE_DATA.get("stats")
+                decision=synth["decision"],
+                score=synth["score"],
+                pros=synth["pros"],
+                cons=synth["cons"],
+                verdict=synth["verdict"],
+                total_analyzed=payload.total_analyzed or (p_stats.get("total", 30) if p_stats else 30),
+                stats=p_stats
             )
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
