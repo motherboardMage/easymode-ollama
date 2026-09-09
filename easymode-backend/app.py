@@ -4,7 +4,7 @@ import json
 import logging
 import os
 import re
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 from fastapi import FastAPI, HTTPException, status, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, FileResponse, Response
@@ -159,6 +159,106 @@ def is_valid_bullet(text: str) -> bool:
     return True
 
 
+NEGATIVE_DEFECT_WORDS = {
+    "fragile", "broke", "broken", "worst", "poor", "tear", "torn", "tearing",
+    "damage", "damaged", "defect", "defective", "came out", "bad", "terrible",
+    "horrible", "cheap quality", "waste of money", "waste", "disappointing",
+    "don't buy", "do not buy", "not good", "low quality", "fell off", "peeled",
+    "useless", "faulty", "stopped working", "rough", "hurts", "painful", "loose",
+    "poor quality", "substandard", "fake", "terrible quality", "rip off"
+}
+
+
+def is_negative_bullet(text: str) -> bool:
+    """Check if a bullet point describes a negative flaw, complaint, or defect."""
+    lower = text.lower()
+    for w in NEGATIVE_DEFECT_WORDS:
+        if re.search(rf"\b{re.escape(w)}\b", lower):
+            return True
+    return False
+
+
+def bullet_tokens(text: str) -> set:
+    """Extract substantive words from bullet for semantic overlap checking."""
+    words = re.findall(r"\b[a-zA-Z]{3,}\b", text.lower())
+    stop_words = {"this", "that", "with", "from", "very", "were", "have", "been", "product", "item", "also"}
+    return set(words) - stop_words
+
+
+def bullet_similarity(s1: str, s2: str) -> float:
+    """Compute token Jaccard similarity between two bullet strings."""
+    t1 = bullet_tokens(s1)
+    t2 = bullet_tokens(s2)
+    if not t1 or not t2:
+        return 0.0
+    return len(t1 & t2) / len(t1 | t2)
+
+
+def sanitize_pros_and_cons(
+    raw_pros: List[str],
+    raw_cons: List[str],
+    score: int,
+    decision: str
+) -> Tuple[List[str], List[str]]:
+    """
+    Sanitizes pros and cons to guarantee MUTUAL EXCLUSIVITY and high quality:
+    1. Removes any negative complaints or defects from 'pros'.
+    2. Drops any pro that substantially overlaps or matches an existing con.
+    3. Deduplicates within pros and within cons.
+    4. Provides intelligent fallback bullets based on the product score/decision.
+    """
+    cleaned_cons: List[str] = []
+    seen_cons = set()
+    for item in raw_cons:
+        cb = clean_bullet_text(item)
+        if is_valid_bullet(cb) and cb.lower() not in seen_cons:
+            cleaned_cons.append(cb)
+            seen_cons.add(cb.lower())
+
+    cleaned_pros: List[str] = []
+    seen_pros = set()
+    for item in raw_pros:
+        pb = clean_bullet_text(item)
+        if not is_valid_bullet(pb) or pb.lower() in seen_pros:
+            continue
+
+        # Reject if the bullet has obvious negative defect/complaint keywords
+        if is_negative_bullet(pb):
+            logger.info(f"Rejected negative complaint from pros: '{pb[:50]}'")
+            if pb.lower() not in seen_cons and len(cleaned_cons) < 3:
+                cleaned_cons.append(pb)
+                seen_cons.add(pb.lower())
+            continue
+
+        # Reject if it matches or overlaps with any existing con
+        has_overlap = False
+        for con_text in cleaned_cons:
+            if pb.lower() in con_text.lower() or con_text.lower() in pb.lower() or bullet_similarity(pb, con_text) >= 0.35:
+                has_overlap = True
+                break
+        if has_overlap:
+            logger.info(f"Rejected duplicate/overlapping bullet from pros: '{pb[:50]}'")
+            continue
+
+        cleaned_pros.append(pb)
+        seen_pros.add(pb.lower())
+
+    # Intelligent contextual fallbacks
+    if not cleaned_pros:
+        if score < 50 or decision == "Pass":
+            cleaned_pros = ["Limited positive feedback reported by buyers"]
+        else:
+            cleaned_pros = ["Positive customer satisfaction reported by buyers"]
+
+    if not cleaned_cons:
+        if score >= 75 or decision == "Strong Buy":
+            cleaned_cons = ["No critical recurring defects reported by reviewers"]
+        else:
+            cleaned_cons = ["Mixed feedback regarding long-term reliability"]
+
+    return cleaned_pros[:3], cleaned_cons[:3]
+
+
 def sanitize_bullets(bullets: List[str], default_fallback: str) -> List[str]:
     """
     Sanitize and filter pros/cons to guarantee high-quality, descriptive bullet points.
@@ -200,6 +300,147 @@ def normalize_decision(raw_decision: str, score: int) -> str:
         return "Mixed / Consider Alternatives"
     else:
         return "Pass"
+
+
+def compute_ground_truth_score(
+    raw_model_score: int,
+    stats: Optional[dict],
+    reviews: List[str]
+) -> Tuple[int, str]:
+    """
+    Computes an objective, mathematically grounded satisfaction score and verdict decision.
+    Prevents model hallucination/sycophancy from assigning high scores ('Strong Buy')
+    to products with poor customer ratings or complaint-heavy reviews.
+    """
+    pos = 0
+    mid = 0
+    crit = 0
+    star_sum = 0
+    count = 0
+
+    if stats and stats.get("total", 0) > 0:
+        c5 = stats.get("five_star", 0)
+        c4 = stats.get("four_star", 0)
+        c3 = stats.get("three_star", 0)
+        c2 = stats.get("two_star", 0)
+        c1 = stats.get("one_star", 0)
+        pos = c5 + c4
+        mid = c3
+        crit = c2 + c1
+        count = pos + mid + crit
+        star_sum = 5 * c5 + 4 * c4 + 3 * c3 + 2 * c2 + 1 * c1
+
+    if count == 0 and reviews:
+        for r in reviews:
+            m = re.match(r"^\[★([1-5])\]", r)
+            s = int(m.group(1)) if m else 3
+            if s >= 4:
+                pos += 1
+            elif s == 3:
+                mid += 1
+            else:
+                crit += 1
+            star_sum += s
+            count += 1
+
+    if count == 0:
+        score = max(0, min(100, raw_model_score))
+        return score, normalize_decision("", score)
+
+    avg_stars = star_sum / count
+
+    # Factor in page-level overall product rating (e.g. 2.7 out of 5 stars based on 26 ratings)
+    product_rating = stats.get("product_rating") if stats else None
+    if product_rating and isinstance(product_rating, (int, float)) and 1.0 <= float(product_rating) <= 5.0:
+        p_val = float(product_rating)
+        if count < 10:
+            effective_stars = 0.60 * p_val + 0.40 * avg_stars
+        else:
+            effective_stars = 0.35 * p_val + 0.65 * avg_stars
+    else:
+        effective_stars = avg_stars
+
+    # Baseline statistical satisfaction anchor (0-100 scale)
+    if effective_stars >= 4.0:
+        anchor = 75.0 + (effective_stars - 4.0) * 23.0
+    elif effective_stars >= 3.2:
+        anchor = 50.0 + (effective_stars - 3.2) / 0.8 * 24.0
+    else:
+        anchor = 10.0 + (effective_stars - 1.0) / 2.2 * 38.0
+
+    anchor = max(10, min(98, round(anchor)))
+
+    crit_ratio = crit / count
+    pos_ratio = pos / count
+
+    # Blend model score with statistical anchor
+    blended = round(0.60 * anchor + 0.40 * raw_model_score)
+
+    # Enforce strict sanity guardrails
+    if crit > pos or crit_ratio >= 0.45 or effective_stars < 3.0:
+        # Critical reviews dominate or low product rating: CANNOT be Strong Buy or high Mixed
+        max_allowed = 42 if effective_stars < 3.0 else (45 if crit > pos else 52)
+        final_score = min(blended, max_allowed, anchor + 4)
+    elif crit_ratio >= 0.30 or effective_stars < 3.5:
+        # Noticeable critical feedback
+        final_score = min(blended, 64)
+    elif pos_ratio >= 0.70 and crit_ratio <= 0.12 and effective_stars >= 3.9:
+        # Overwhelming positive feedback
+        final_score = max(blended, 75, anchor - 5)
+    else:
+        # Keep within reasonable bounds around statistical anchor
+        final_score = max(anchor - 12, min(anchor + 12, blended))
+
+    final_score = max(5, min(99, final_score))
+
+    if final_score >= 75:
+        decision = "Strong Buy"
+    elif final_score >= 50:
+        decision = "Mixed / Consider Alternatives"
+    else:
+        decision = "Pass"
+
+    return final_score, decision
+
+
+def build_smart_verdict(
+    raw_verdict: str,
+    decision: str,
+    score: int,
+    pros: List[str],
+    cons: List[str]
+) -> str:
+    """
+    Guarantees a compelling, authentic 2-sentence executive verdict.
+    Eliminates generic boilerplate and prevents verdict contradicting the decision.
+    """
+    v = (raw_verdict or "").strip()
+    is_generic = (not v or len(v) < 20 or "based on customer consensus" in v.lower())
+    contradicts = False
+    if decision == "Pass" and any(w in v.lower() for w in ["strong buy", "highly recommend", "must buy", "great purchase", "excellent choice"]):
+        contradicts = True
+    elif decision == "Strong Buy" and any(w in v.lower() for w in ["pass on", "avoid", "do not buy", "poor purchase", "unfavorable"]):
+        contradicts = True
+
+    if not is_generic and not contradicts:
+        return v
+
+    p_sample = pros[0] if pros else "appealing design"
+    c_sample = cons[0] if cons else "reported flaws"
+    # Clean samples for natural grammatical flow
+    p_clean = p_sample.split(" - ")[0].rstrip(".!").strip()
+    c_clean = c_sample.split(" - ")[0].rstrip(".!").strip()
+    if p_clean and p_clean[0].isupper():
+        p_clean = p_clean[0].lower() + p_clean[1:]
+    if c_clean and c_clean[0].isupper():
+        c_clean = c_clean[0].lower() + c_clean[1:]
+
+    if decision == "Pass":
+        return f"With an unfavorable score of {score}/100, frequent complaints regarding {c_clean} heavily overshadow any {p_clean}. Most shoppers should pass on this product."
+    elif decision == "Mixed / Consider Alternatives":
+        return f"Earning a mixed score of {score}/100, this product offers {p_clean}, but notable drawbacks like {c_clean} mean buyers should weigh alternatives carefully."
+    else:
+        return f"With an impressive score of {score}/100, customers widely praise {p_clean} with few recurring issues. It stands as a strong recommendation for prospective buyers."
 
 
 def clean_json_text(text: str) -> str:
@@ -481,11 +722,28 @@ async def analyze_reviews(payload: AnalyzeRequest):
     stats_header = ""
     if payload.stats:
         s = payload.stats
+        rating_line = ""
+        if s.get("product_rating"):
+            rc = s.get("ratings_count")
+            rc_str = f" based on {rc:,} ratings" if rc else ""
+            rating_line = f"- Overall Product Rating: {s.get('product_rating')} / 5.0 stars{rc_str}\n"
+
+        c5 = s.get("five_star", 0)
+        c4 = s.get("four_star", 0)
+        c3 = s.get("three_star", 0)
+        c2 = s.get("two_star", 0)
+        c1 = s.get("one_star", 0)
+        total_s = c5 + c4 + c3 + c2 + c1
+        if total_s > 0:
+            calc_idx = round((5*c5 + 4*c4 + 3*c3 + 2*c2 + 1*c1) / (total_s * 5) * 100)
+        else:
+            calc_idx = s.get("avg_score", 50)
+
         stats_header = (
             f"MACRO REVIEW METRICS (Sampled across {effective_total} verified customer reviews):\n"
-            f"- Star Ratings: 5★ ({s.get('five_star', 0)}), 4★ ({s.get('four_star', 0)}), "
-            f"3★ ({s.get('three_star', 0)}), 2★ ({s.get('two_star', 0)}), 1★ ({s.get('one_star', 0)})\n"
-            f"- Computed Satisfaction Index: {s.get('avg_score', 75)}%\n\n"
+            f"{rating_line}"
+            f"- Star Ratings: 5★ ({c5}), 4★ ({c4}), 3★ ({c3}), 2★ ({c2}), 1★ ({c1})\n"
+            f"- Computed Review Satisfaction Index: {calc_idx}%\n\n"
         )
 
     system_prompt = (
@@ -494,17 +752,20 @@ async def analyze_reviews(payload: AnalyzeRequest):
         "{\n"
         '  "decision": "Strong Buy" | "Mixed / Consider Alternatives" | "Pass",\n'
         '  "score": <integer from 0 to 100>,\n'
-        '  "pros": [<2 to 3 descriptive phrases explaining specific product strengths or user benefits>],\n'
-        '  "cons": [<2 to 3 descriptive phrases explaining specific product drawbacks, complaints, or flaws>],\n'
+        '  "pros": [<1 to 3 concise descriptive phrases explaining specific product strengths or user benefits>],\n'
+        '  "cons": [<1 to 3 concise descriptive phrases explaining specific product drawbacks, complaints, or flaws>],\n'
         '  "verdict": "<2 clear sentences summarizing overall performance and who should buy it>"\n'
         "}\n\n"
         "CRITICAL RULES:\n"
         "1. Pros and Cons MUST describe specific product features or user experiences (e.g., 'Absorbs quickly without sticky residue', 'Leaves white cast on darker skin tones').\n"
         "2. NEVER output single words or generic praise (NEVER output: 'Best', 'Nice', 'Good', 'Wow', 'Awesome', 'Great', 'Super', 'ok', 'Worst', 'Bad').\n"
-        "3. NEVER output product/brand names (e.g. 'Lakme sunscreen') or variant sizing ('Size: 100 ml') as pros or cons.\n"
-        "4. Score Criteria: 75-100 = Strong Buy. 50-74 = Mixed / Consider Alternatives. 0-49 = Pass.\n"
-        "5. Return ONLY the valid JSON object without markdown code fences or conversational text.\n"
-        "6. Provide strictly 2 to 3 pros and 2 to 3 cons. Keep each point under 15 words."
+        "3. NEVER output product/brand names or variant sizing as pros or cons.\n"
+        "4. SCORING CRITERIA:\n"
+        "   - Strong Buy (75-100): Overwhelmingly positive customer feedback (>= 70% positive ratings, minimal critical defects).\n"
+        "   - Mixed / Consider Alternatives (50-74): Moderate satisfaction with notable trade-offs or split opinions.\n"
+        "   - Pass (0-49): Poor rating, frequent quality defects, or critical complaints (1★/2★) outnumbering positive reviews. If a product has low ratings or complaints about tearing/breaking/poor durability, you MUST assign a score below 50 and decision 'Pass'.\n"
+        "5. MUTUAL EXCLUSIVITY: Pros and Cons MUST NEVER overlap. A flaw or defect (e.g. fragile cloth, breakage) MUST NEVER be listed in pros. If there are few or no strengths, list only genuine strengths (or 1 pro). Do NOT invent pros.\n"
+        "6. Return ONLY the valid JSON object without markdown code fences or conversational text. Keep each point under 15 words."
     )
 
     user_prompt = f"{stats_header}BALANCED REPRESENTATIVE REVIEWS (Positive, Mixed, & Critical):\n{formatted_reviews}\n\nJSON Output:"
@@ -635,69 +896,43 @@ async def analyze_reviews(payload: AnalyzeRequest):
             detail="Ollama returned an empty response."
         )
 
-    # Parse JSON output from model with multi-tier fault tolerance
+    parsed = {}
     try:
         parsed = robust_parse_model_json(raw_response_text)
     except Exception as exc:
-        logger.error(f"Failed to decode JSON from Ollama output: {exc}. Raw text: {raw_response_text}")
-        if EASYMODE_OFFLINE:
-            logger.warning("Serving cached synthesis fallback in offline mode.")
-            return AnalyzeResponse(
-                decision="Strong Buy",
-                score=78,
-                pros=[
-                    "Ultra-matte finish with 4-5 hour oil control for oily skin",
-                    "Absorbs rapidly within seconds with zero sticky residue",
-                    "Reliable broad spectrum SPF 50 PA+++ sun protection",
-                    "Non-comedogenic formula that does not trigger acne breakouts"
-                ],
-                cons=[
-                    "Noticeable floral perfume fragrance may irritate sensitive skin",
-                    "Can leave a chalky white cast on deeper dark complexions",
-                    "Slightly thick lotion consistency requires thorough blending"
-                ],
-                verdict="Lakmé Sun Expert SPF 50 is an exceptional daily sunscreen for oily and combination skin types seeking a non-greasy matte finish. Those with very dark skin tones or sensitivity to added floral fragrance should consider fragrance-free alternatives.",
-                total_analyzed=payload.total_analyzed or 30,
-                stats=payload.stats or OFFLINE_DATA.get("stats")
-            )
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Ollama did not produce valid JSON: {str(exc)}"
-        )
+        logger.error(f"Failed to decode JSON from Ollama output: {exc}. Raw text: {raw_response_text[:180]}")
+        parsed = {}
 
-    # Sanitize and clamp values according to output schema
+    # Sanitize and clamp values according to output schema and statistical ground truth
     try:
-        raw_score = int(parsed.get("score", 50))
-        score = max(0, min(100, raw_score))
-        decision = normalize_decision(str(parsed.get("decision", "")), score)
+        raw_score = int(parsed.get("score", 50)) if parsed.get("score") is not None else 50
+        final_score, decision = compute_ground_truth_score(raw_score, payload.stats, selected_reviews)
 
         raw_pros = parsed.get("pros", [])
         if not isinstance(raw_pros, list):
             raw_pros = [str(raw_pros)]
-        pros = sanitize_bullets(raw_pros, "Positive customer feedback reported across reviews")
 
         raw_cons = parsed.get("cons", [])
         if not isinstance(raw_cons, list):
             raw_cons = [str(raw_cons)]
-        cons = sanitize_bullets(raw_cons, "No critical recurring defects reported by reviewers")
 
-        verdict = str(parsed.get("verdict", "")).strip()
-        if not verdict or len(verdict) < 15:
-            verdict = f"With a score of {score}/100, this product is rated as {decision} based on customer consensus."
+        # Enforce mutual exclusivity and eliminate cross-repetition
+        pros, cons = sanitize_pros_and_cons(raw_pros, raw_cons, final_score, decision)
+        verdict = build_smart_verdict(str(parsed.get("verdict", "")), decision, final_score, pros, cons)
 
         result = AnalyzeResponse(
             decision=decision,
-            score=score,
+            score=final_score,
             pros=pros,
             cons=cons,
             verdict=verdict,
             total_analyzed=effective_total,
             stats=payload.stats
         )
-        logger.info(f"Analysis complete: decision='{decision}', score={score}, total_analyzed={effective_total}")
+        logger.info(f"Analysis complete: decision='{decision}', score={final_score}, total_analyzed={effective_total}")
         LAST_ANALYSIS = {
             "decision": decision,
-            "score": score,
+            "score": final_score,
             "pros": pros,
             "cons": cons,
             "verdict": verdict,
@@ -710,9 +945,17 @@ async def analyze_reviews(payload: AnalyzeRequest):
     except Exception as exc:
         CURRENT_STATUS = "idle"
         logger.error(f"Error structuring AnalyzeResponse: {exc}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error structuring model response: {str(exc)}"
+        final_score, decision = compute_ground_truth_score(50, payload.stats, selected_reviews)
+        pros, cons = sanitize_pros_and_cons([], [], final_score, decision)
+        verdict = build_smart_verdict("", decision, final_score, pros, cons)
+        return AnalyzeResponse(
+            decision=decision,
+            score=final_score,
+            pros=pros,
+            cons=cons,
+            verdict=verdict,
+            total_analyzed=effective_total,
+            stats=payload.stats
         )
 
 

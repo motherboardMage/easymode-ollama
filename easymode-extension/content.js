@@ -127,6 +127,72 @@
     return null;
   }
 
+  function extractProductPageRating(platform) {
+    let rating = null;
+    let ratingsCount = null;
+    let productTitle = "";
+
+    try {
+      // 1. Title
+      const titleEl = document.querySelector("#productTitle, h1 span, span#productTitle, .B_NuCI, ._2-632D, h1.a-size-large, h1");
+      if (titleEl) {
+        productTitle = titleEl.textContent.trim();
+      }
+
+      // 2. Try JSON-LD aggregateRating first
+      const ldScripts = document.querySelectorAll('script[type="application/ld+json"]');
+      for (const script of ldScripts) {
+        try {
+          const raw = JSON.parse(script.textContent || script.innerText || "{}");
+          const items = Array.isArray(raw) ? raw : [raw];
+          for (const it of items) {
+            if (it.aggregateRating && it.aggregateRating.ratingValue) {
+              const val = parseFloat(it.aggregateRating.ratingValue);
+              if (!isNaN(val) && val >= 1.0 && val <= 5.0) {
+                rating = val;
+                ratingsCount = it.aggregateRating.ratingCount || it.aggregateRating.reviewCount || null;
+                break;
+              }
+            }
+          }
+          if (rating !== null) break;
+        } catch (_) {}
+      }
+
+      // 3. Platform specific DOM fallback
+      if (rating === null) {
+        if (platform === "amazon") {
+          const pop = document.querySelector('#acrPopover, [data-hook="rating-out-of-text"], #averageCustomerReviews .a-icon-alt, span.cr-widget-TitleRatingsPercentage, i[class*="a-icon-star"]');
+          if (pop) {
+            const txt = pop.getAttribute("title") || pop.textContent || "";
+            const m = txt.match(/([1-5](?:\.\d+)?)\s*(?:out\s*of\s*5|stars?)/i);
+            if (m) rating = parseFloat(m[1]);
+          }
+          const countEl = document.querySelector("#acrCustomerReviewText, [data-hook='total-review-count']");
+          if (countEl) {
+            const m = countEl.textContent.replace(/,/g, "").match(/\d+/);
+            if (m) ratingsCount = parseInt(m[0], 10);
+          }
+        } else if (platform === "flipkart") {
+          const badge = document.querySelector("div.XQDdHH, div._3LWZlK, span.XQDdHH, div.OmE16y");
+          if (badge) {
+            const m = badge.textContent.match(/([1-5](?:\.\d+)?)/);
+            if (m) rating = parseFloat(m[1]);
+          }
+          const countEl = document.querySelector("span._2_R_DZ, span.W9E0Qc");
+          if (countEl) {
+            const m = countEl.textContent.replace(/,/g, "").match(/\d+/);
+            if (m) ratingsCount = parseInt(m[0], 10);
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("[easymode] Error extracting product page rating:", err);
+    }
+
+    return { rating, ratingsCount, productTitle };
+  }
+
   function parseCardsFromDoc(rootDoc) {
     const reviews = [];
     const cards = rootDoc.querySelectorAll(
@@ -773,8 +839,13 @@
       else if (s === 2) stats.two_star++;
       else if (s === 1) stats.one_star++;
       scoreSum += s * 20;
-    });
     stats.avg_score = Math.round(scoreSum / totalHarvested);
+
+    // Extract page-level rating and metadata
+    const pageMeta = extractProductPageRating(platform);
+    stats.product_rating = pageMeta.rating;
+    stats.ratings_count = pageMeta.ratingsCount;
+    stats.product_title = pageMeta.productTitle;
 
     // Stratified sampling for LLM: Balanced mix of positive, critical, and mixed
     const positives = uniqueItems.filter((r) => r.star >= 4);
@@ -809,6 +880,8 @@
       total_analyzed: totalHarvested,
       effort_requested: maxReviews,
       stats: stats,
+      product_title: pageMeta.productTitle,
+      product_rating: pageMeta.rating,
       diagnostics: {
         total_raw: rawItems.length,
         total_unique: totalHarvested,
@@ -817,7 +890,9 @@
         crit_count: criticals.length,
         sampled_count: representative.length,
         platform: platform,
-        asin: platform === "amazon" ? getAmazonAsin() : (platform === "flipkart" ? (getFlipkartProductInfo().pid || getFlipkartProductInfo().itemId) : null)
+        asin: platform === "amazon" ? getAmazonAsin() : (platform === "flipkart" ? (getFlipkartProductInfo().pid || getFlipkartProductInfo().itemId) : null),
+        product_rating: pageMeta.rating,
+        ratings_count: pageMeta.ratingsCount
       }
     };
   }

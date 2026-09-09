@@ -207,6 +207,8 @@ async function executeAnalysisPipeline(tabId, tabUrl, effort) {
         reviews: reviews,
         total_analyzed: job.totalAnalyzed,
         stats: job.stats,
+        product_title: extraction.product_title || null,
+        asin: extraction.diagnostics?.asin || null,
       }),
       signal: controller.signal,
     });
