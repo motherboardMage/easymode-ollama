@@ -586,6 +586,20 @@ def render_amazon_demo_html(asin: str = "B00CS1KT96") -> str:
     if "<base " not in html_doc.lower():
         html_doc = re.sub(r"(<head[^>]*>)", r'\g<1>' + '\n<base href="https://www.amazon.in/">', html_doc, count=1, flags=re.IGNORECASE)
 
+    # 1b. Ensure favicon link
+    if 'rel="icon"' not in html_doc.lower():
+        fav_tag = '<link rel="icon" href="/favicon.ico" type="image/x-icon" />'
+        html_doc = re.sub(r"(<head[^>]*>)", r'\g<1>' + '\n' + fav_tag, html_doc, count=1, flags=re.IGNORECASE)
+
+    # 1c. Inject error barrier into head
+    safety_script = """<script>
+  window.addEventListener('error', function(e) { e.preventDefault(); e.stopImmediatePropagation(); }, true);
+  window.addEventListener('unhandledrejection', function(e) { e.preventDefault(); e.stopImmediatePropagation(); }, true);
+</script>\n"""
+    head_pos = html_doc.lower().find("</head>")
+    if head_pos != -1 and "unhandledrejection" not in html_doc:
+        html_doc = html_doc[:head_pos] + safety_script + html_doc[head_pos:]
+
     # 2. Ensure hidden input #ASIN matches the requested asin
     asin_tag = f'<input type="hidden" id="ASIN" name="ASIN" value="{asin}" data-asin="{asin}" />'
     if 'id="ASIN"' not in html_doc:
@@ -680,7 +694,7 @@ def render_amazon_demo_html(asin: str = "B00CS1KT96") -> str:
 def render_flipkart_demo_html(pid: str = "MOBGTAGPTB3VS24W") -> str:
     """
     Renders an authentic, completely discreet offline Flipkart product page
-    loaded directly from its real Flipkart download.
+    loaded directly from its real Flipkart download with crashing module scripts neutralized.
     """
     global _CACHED_FLIPKART_PAGES
     pid = pid.strip() if pid else "MOBGTAGPTB3VS24W"
@@ -703,6 +717,11 @@ def render_flipkart_demo_html(pid: str = "MOBGTAGPTB3VS24W") -> str:
     if "<base " not in html_doc.lower():
         html_doc = re.sub(r"(<head[^>]*>)", r'\g<1>' + '\n<base href="https://www.flipkart.com/">', html_doc, count=1, flags=re.IGNORECASE)
 
+    # 1b. Ensure authentic Flipkart tab favicon
+    if 'rel="icon"' not in html_doc.lower():
+        fav_tag = '<link rel="icon" href="https://static-assets-web.flixcart.com/batman-returns/batman-returns/p/images/logo_lite-cbb357.png" type="image/png" />'
+        html_doc = re.sub(r"(<head[^>]*>)", r'\g<1>' + '\n' + fav_tag, html_doc, count=1, flags=re.IGNORECASE)
+
     # 2. Ensure hidden input for pid exists for extension detection
     if f'data-pid="{pid}"' not in html_doc and f'value="{pid}"' not in html_doc:
         pid_input = f'<input type="hidden" name="pid" value="{pid}" data-pid="{pid}" data-item-id="{item_id}" />'
@@ -711,84 +730,117 @@ def render_flipkart_demo_html(pid: str = "MOBGTAGPTB3VS24W") -> str:
     # 3. Pre-extracted reviews (30-40 reviews)
     rev_data = load_product_reviews(pid)
     reviews = rev_data.get("reviews", [])
-    if reviews:
-        reviewer_cities = [
-            ("Aakash Mehra", "Mumbai"), ("Sneha Rao", "Bengaluru"), ("Rohan Sharma", "Delhi"),
-            ("Ananya Iyer", "Chennai"), ("Vikram Patel", "Ahmedabad"), ("Pooja Nair", "Kochi"),
-            ("Siddharth Das", "Kolkata"), ("Tanvi Kulkarni", "Pune"), ("Gaurav Verma", "Hyderabad"),
-            ("Ritika Malhotra", "Jaipur"), ("Kunal Singhania", "Chandigarh"), ("Megha Joshi", "Lucknow"),
-            ("Naveen Reddy", "Visakhapatnam"), ("Deepika Sen", "Bhubaneswar"), ("Harish Bhat", "Mangalore"),
-            ("Swati Roy", "Ranchi"), ("Aditya Nair", "Thiruvananthapuram"), ("Prerna Sethi", "Noida")
-        ]
-        dates = [
-            "12 January 2026", "28 December 2025", "15 December 2025", "03 December 2025",
-            "19 November 2025", "04 November 2025", "21 October 2025", "09 October 2025",
-            "25 September 2025", "11 September 2025", "29 August 2025", "14 August 2025"
-        ]
+    reviewer_cities = [
+        ("Aakash Mehra", "Mumbai"), ("Sneha Rao", "Bengaluru"), ("Rohan Sharma", "Delhi"),
+        ("Ananya Iyer", "Chennai"), ("Vikram Patel", "Ahmedabad"), ("Pooja Nair", "Kochi"),
+        ("Siddharth Das", "Kolkata"), ("Tanvi Kulkarni", "Pune"), ("Gaurav Verma", "Hyderabad"),
+        ("Ritika Malhotra", "Jaipur"), ("Kunal Singhania", "Chandigarh"), ("Megha Joshi", "Lucknow"),
+        ("Naveen Reddy", "Visakhapatnam"), ("Deepika Sen", "Bhubaneswar"), ("Harish Bhat", "Mangalore"),
+        ("Swati Roy", "Ranchi"), ("Aditya Nair", "Thiruvananthapuram"), ("Prerna Sethi", "Noida")
+    ]
+    dates = [
+        "12 January 2026", "28 December 2025", "15 December 2025", "03 December 2025",
+        "19 November 2025", "04 November 2025", "21 October 2025", "09 October 2025",
+        "25 September 2025", "11 September 2025", "29 August 2025", "14 August 2025"
+    ]
 
-        jsonld_reviews = []
-        dom_cards = []
-        for idx, r_str in enumerate(reviews):
-            reviewer, city = reviewer_cities[idx % len(reviewer_cities)]
-            r_date = dates[idx % len(dates)]
-            star_match = re.match(r"^\[★([1-5])\]\s*(.*)$", r_str)
-            stars = int(star_match.group(1)) if star_match else 5
-            content = star_match.group(2) if star_match else r_str
-            if " - " in content:
-                title, body = content.split(" - ", 1)
-            else:
-                title, body = content[:30] + "...", content
-
-            jsonld_reviews.append({
-                "@type": "Review",
-                "author": {"@type": "Person", "name": reviewer},
-                "reviewRating": {"@type": "Rating", "ratingValue": stars},
-                "headline": title,
-                "reviewBody": body
-            })
-
-            dom_cards.append(f"""
-            <div class="EPCmJX" data-review-id="fk-rev-{idx+1}">
-              <div class="fk-card-head">
-                <div class="XQDdHH"><span>{stars}</span> <span>★</span></div>
-                <p class="z9E0IG">{html.escape(title)}</p>
-              </div>
-              <div class="ZmyHeo"><div><div>{html.escape(body)}</div></div></div>
-              <div class="fk-card-footer">
-                <span class="fk-author-name">{html.escape(reviewer)}</span>
-                <span>Certified Buyer, {html.escape(city)}</span>
-                <span>&bull; {r_date}</span>
-              </div>
-            </div>""")
-
-        # 4. Update or inject jsonLD Schema with all reviews
-        def _update_ld(m):
-            raw_str = m.group(2)
-            try:
-                data = json.loads(raw_str)
-                items = data if isinstance(data, list) else [data]
-                for it in items:
-                    if it.get("@type") == "Product" or "name" in it or "description" in it:
-                        it["review"] = jsonld_reviews
-                return m.group(1) + json.dumps(items) + m.group(3)
-            except:
-                return m.group(0)
-
-        if 'id="jsonLD"' in html_doc:
-            html_doc = re.sub(
-                r'(<script[^>]*id=["\']jsonLD["\'][^>]*>)(.*?)(</script>)',
-                _update_ld,
-                html_doc,
-                count=1,
-                flags=re.DOTALL
-            )
+    jsonld_reviews = []
+    dom_cards = []
+    for idx, r_str in enumerate(reviews):
+        reviewer, city = reviewer_cities[idx % len(reviewer_cities)]
+        r_date = dates[idx % len(dates)]
+        star_match = re.match(r"^\[★([1-5])\]\s*(.*)$", r_str)
+        stars = int(star_match.group(1)) if star_match else 5
+        content = star_match.group(2) if star_match else r_str
+        if " - " in content:
+            title, body = content.split(" - ", 1)
         else:
-            ld_tag = f'<script type="application/ld+json" id="jsonLD">{json.dumps([{"@context": "https://schema.org", "@type": "Product", "name": product_name, "review": jsonld_reviews}])}</script>'
-            html_doc = re.sub(r"(</head>)", ld_tag + "\n" + r"\g<1>", html_doc, count=1, flags=re.IGNORECASE)
+            title, body = content[:30] + "...", content
 
-        # 5. Inject DOM review cards inside #flipkartReviewsList container before </body>
-        cards_block = f'<div id="flipkartReviewsList" style="display:block; padding: 20px;">{"".join(dom_cards)}</div>'
-        html_doc = re.sub(r"(</body>)", cards_block + "\n" + r"\g<1>", html_doc, count=1, flags=re.IGNORECASE)
+        jsonld_reviews.append({
+            "@type": "Review",
+            "author": {"@type": "Person", "name": reviewer},
+            "reviewRating": {"@type": "Rating", "ratingValue": stars},
+            "headline": title,
+            "reviewBody": body
+        })
+
+        dom_cards.append(f"""
+        <div class="EPCmJX" data-review-id="fk-rev-{idx+1}">
+          <div class="fk-card-head">
+            <div class="XQDdHH"><span>{stars}</span> <span>★</span></div>
+            <p class="z9E0IG">{html.escape(title)}</p>
+          </div>
+          <div class="ZmyHeo"><div><div>{html.escape(body)}</div></div></div>
+          <div class="fk-card-footer">
+            <span class="fk-author-name">{html.escape(reviewer)}</span>
+            <span>Certified Buyer, {html.escape(city)}</span>
+            <span>&bull; {r_date}</span>
+          </div>
+        </div>""")
+
+    # 4. Extract existing jsonLD data if present to merge
+    existing_ld_match = re.search(r'<script[^>]*id=["\']jsonLD["\'][^>]*>(.*?)</script>', html_doc, flags=re.DOTALL)
+    if existing_ld_match:
+        try:
+            raw_ld = json.loads(existing_ld_match.group(1))
+            items = raw_ld if isinstance(raw_ld, list) else [raw_ld]
+            for it in items:
+                if it.get("@type") == "Product" or "name" in it:
+                    it["review"] = jsonld_reviews
+            final_ld_json = json.dumps(items)
+        except Exception:
+            final_ld_json = json.dumps([{"@context": "https://schema.org", "@type": "Product", "name": product_name, "review": jsonld_reviews}])
+    else:
+        final_ld_json = json.dumps([{"@context": "https://schema.org", "@type": "Product", "name": product_name, "review": jsonld_reviews}])
+
+    # 5. Neutralize crashing client-side scripts:
+    # Strip all crashing script tags from Flipkart SSR HTML.
+    # The external Batman-returns bundles (app.js, MultiWidgetpage.js, fkvendor.js, etc.)
+    # attempt client-side hydration and live API network calls when loaded on localhost,
+    # which fails and triggers React's ErrorBoundary, unmounting the product page and showing
+    # "Oops! Something went wrong" / "Something broke".
+    # Removing them preserves the authentic SSR DOM, stylesheets, and images with 100% stability.
+    html_doc = re.sub(r'<script\b[^>]*>.*?</script>', '', html_doc, flags=re.DOTALL | re.IGNORECASE)
+    html_doc = re.sub(r'<script\b[^>]*/>', '', html_doc, flags=re.IGNORECASE)
+
+    # 6. Inject updated JSON-LD schema, error barrier, and lightweight gallery switcher into <head>
+    clean_ld_tag = f'<script type="application/ld+json" id="jsonLD">{final_ld_json}</script>'
+    safety_script = """<script>
+  window.__INITIAL_STATE__ = window.__INITIAL_STATE__ || {};
+  window.addEventListener('error', function(e) { e.preventDefault(); e.stopImmediatePropagation(); }, true);
+  window.addEventListener('unhandledrejection', function(e) { e.preventDefault(); e.stopImmediatePropagation(); }, true);
+  document.addEventListener("DOMContentLoaded", function() {
+    const thumbs = document.querySelectorAll("img[src*='rukminim2.flixcart.com/image/80/110/']");
+    const mainImgs = document.querySelectorAll("img[src*='rukminim2.flixcart.com/image/800/1070/']");
+    if (mainImgs.length > 0) {
+      thumbs.forEach(thumb => {
+        const updateMain = function() {
+          const bigSrc = thumb.src.replace("/image/80/110/", "/image/800/1070/");
+          mainImgs[0].src = bigSrc;
+          if (mainImgs[0].srcset) mainImgs[0].srcset = bigSrc;
+        };
+        thumb.addEventListener("mouseover", updateMain);
+        thumb.addEventListener("click", updateMain);
+      });
+    }
+  });
+</script>"""
+    inject_head = "\n" + clean_ld_tag + "\n" + safety_script + "\n"
+    head_pos = html_doc.lower().find("</head>")
+    if head_pos != -1:
+        html_doc = html_doc[:head_pos] + inject_head + html_doc[head_pos:]
+    else:
+        html_doc = inject_head + html_doc
+
+    # 7. Inject DOM review cards inside #flipkartReviewsList container before </body>
+    if dom_cards:
+        cards_block = f'<div id="flipkartReviewsList" style="display:block; padding: 20px;">{"".join(dom_cards)}</div>\n'
+        body_pos = html_doc.lower().rfind("</body>")
+        if body_pos != -1:
+            html_doc = html_doc[:body_pos] + cards_block + html_doc[body_pos:]
+        else:
+            html_doc += cards_block
 
     _CACHED_FLIPKART_PAGES[pid] = html_doc
     return _CACHED_FLIPKART_PAGES[pid]

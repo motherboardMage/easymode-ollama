@@ -7,7 +7,7 @@ import re
 from typing import List, Optional, Dict, Any
 from fastapi import FastAPI, HTTPException, status, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse, Response
 from pydantic import BaseModel, Field
 import httpx
 import demo_page
@@ -311,6 +311,26 @@ async def get_demo_catalog():
         "products": demo_page.get_demo_catalog(),
         "total": len(demo_page.get_demo_catalog())
     }
+
+
+FAVICON_PATH = os.path.join(os.path.dirname(__file__), "offline_data", "favicon.ico")
+FAVICON_FK_PATH = os.path.join(os.path.dirname(__file__), "offline_data", "favicon_flipkart.png")
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def get_favicon():
+    """Serves standard offline favicon to prevent 404 logs and ensure crisp browser tabs."""
+    if os.path.exists(FAVICON_PATH):
+        return FileResponse(FAVICON_PATH, media_type="image/x-icon")
+    return Response(status_code=204)
+
+
+@app.get("/favicon.png", include_in_schema=False)
+async def get_favicon_png():
+    """Serves authentic offline Flipkart logo favicon."""
+    if os.path.exists(FAVICON_FK_PATH):
+        return FileResponse(FAVICON_FK_PATH, media_type="image/png")
+    return Response(status_code=204)
 
 
 @app.get("/demo", response_class=HTMLResponse)
